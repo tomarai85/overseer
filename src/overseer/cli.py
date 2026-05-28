@@ -67,6 +67,37 @@ def cmd_scan(store: Store) -> int:
     return 0
 
 
+def cmd_doctor(store: Store) -> int:
+    """`overseer doctor` — environment self-check."""
+    import shutil
+    from pathlib import Path
+    from . import lease
+
+    def line(ok, label, detail=""):
+        print(f"  [{'OK ' if ok else 'XX '}] {label}{('  -  ' + detail) if detail else ''}")
+
+    print("\n  OVERSEER doctor\n")
+    claude = shutil.which("claude")
+    line(bool(claude), "claude CLI on PATH", claude or "NOT FOUND")
+    try:
+        n = len(roster.fetch())
+        line(True, "claude agents --json", f"{n} live sessions")
+    except Exception as e:
+        line(False, "claude agents --json", str(e)[:60])
+    proj = Path.home() / ".claude" / "projects"
+    line(proj.exists(), "transcript dir", str(proj))
+    try:
+        store.log_event("__doctor__", "ping", "")
+        line(True, "sqlite writable", str(store.db_path))
+    except Exception as e:
+        line(False, "sqlite writable", str(e)[:60])
+    leases = list(lease.LEASE_DIR.glob("*.json")) if lease.LEASE_DIR.exists() else []
+    line(True, "lease hook (v2)", f"{len(leases)} fresh-ish leases — "
+         + ("installed" if leases else "NOT installed (see README 'opt-in lease hook')"))
+    print()
+    return 0
+
+
 def cmd_restart(store: Store, args: list[str]) -> int:
     """`overseer restart <session_id_prefix>` — DRY-RUN restart planner (no execution)."""
     from . import recover
@@ -129,6 +160,8 @@ def main(argv: list[str] | None = None) -> int:
             return web.serve(port=port)
         if cmd == "restart":
             return cmd_restart(store, argv[1:])
+        if cmd == "doctor":
+            return cmd_doctor(store)
         print(f"unknown command: {cmd}", file=sys.stderr)
         return 2
     finally:
