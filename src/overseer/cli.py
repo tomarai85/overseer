@@ -67,6 +67,34 @@ def cmd_scan(store: Store) -> int:
     return 0
 
 
+def cmd_restart(store: Store, args: list[str]) -> int:
+    """`overseer restart <session_id_prefix>` — DRY-RUN restart planner (no execution)."""
+    from . import recover
+    scan_once(store)
+    rows = {r["session_id"]: dict(r) for r in store.all_leads()}
+    if not args:
+        # show all restartable leads
+        plans = [recover.plan_restart(r) for r in rows.values()]
+        restartable = [p for p in plans if p.restartable]
+        print(f"\n  restartable leads: {len(restartable)} (dry-run; nothing executed)\n")
+        for p in restartable:
+            print("  " + p.as_text().replace("\n", "\n  "))
+        if not restartable:
+            print("  (no crashed/done/gone leads right now)")
+        print("\n  to plan a specific one: overseer restart <session_id_prefix>\n")
+        return 0
+    prefix = args[0]
+    match = next((sid for sid in rows if sid.startswith(prefix)), None)
+    if not match:
+        print(f"no lead matching '{prefix}'", file=sys.stderr)
+        return 1
+    plan = recover.plan_restart(rows[match])
+    print("\n" + plan.as_text())
+    print("\n  (DRY-RUN — execution is gated until lease/quiescence guards exist; "
+          "see docs/STATE-TRUTH.md)\n")
+    return 0
+
+
 def cmd_daemon(store: Store, interval: float = 5.0) -> int:
     print(f"overseer daemon: polling every {interval}s (Ctrl-C to stop)", file=sys.stderr)
     while True:
@@ -99,6 +127,8 @@ def main(argv: list[str] | None = None) -> int:
             store.close()  # serve manages its own connections (threaded)
             port = int(argv[1]) if len(argv) > 1 else 8899
             return web.serve(port=port)
+        if cmd == "restart":
+            return cmd_restart(store, argv[1:])
         print(f"unknown command: {cmd}", file=sys.stderr)
         return 2
     finally:
