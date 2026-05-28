@@ -140,8 +140,20 @@ def serve(host: str = "127.0.0.1", port: int = 8899, interval: float = 5.0) -> i
     stop = threading.Event()
     t = threading.Thread(target=_poll_loop, args=(writer, interval, stop), daemon=True)
     t.start()
-    httpd = ThreadingHTTPServer((host, port), make_handler(db_path))
-    print(f"overseer: dashboard at http://{host}:{port}  (poll {interval}s, Ctrl-C to stop)")
+    httpd = None
+    for p in range(port, port + 10):  # try a few ports if the first is taken
+        try:
+            httpd = ThreadingHTTPServer((host, p), make_handler(db_path))
+            port = p
+            break
+        except OSError:
+            continue
+    if httpd is None:
+        print(f"overseer: ports {port}-{port + 9} all in use", flush=True)
+        stop.set()
+        writer.close()
+        return 1
+    print(f"overseer: dashboard at http://{host}:{port}  (poll {interval}s, Ctrl-C to stop)", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
