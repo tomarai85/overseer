@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Convenience launcher so you don't have to set PYTHONPATH every time.
+#   ./bin/overseer status | scan | serve | daemon | restart | doctor
+HERE="$(cd "$(dirname "$0")/.." && pwd)"
+exec python3 -c "import sys; sys.path.insert(0, '$HERE/src'); from overseer.cli import main; sys.exit(main())" "$@"
