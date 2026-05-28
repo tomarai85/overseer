@@ -67,6 +67,45 @@ def cmd_scan(store: Store) -> int:
     return 0
 
 
+def cmd_demo(argv: list[str]) -> int:
+    """`overseer demo [port]` — serve a board seeded with every state (synthetic).
+
+    Tom's real fleet is usually all-healthy, so this shows what the alert states
+    (needs-you / crashed / blocked) actually look like. Synthetic data only.
+    """
+    import os
+    from pathlib import Path
+    from . import web
+    demo_db = str(Path.home() / "overseer" / "data" / "demo.db")
+    try:
+        os.remove(demo_db)
+    except OSError:
+        pass
+    s = Store(demo_db)
+    now = time.time()
+    synthetic = [
+        ("helix-ios", "needs-human", "assistant:tool_use", 40, "needs your approval on a tool"),
+        ("directstack-x", "crashed", "assistant:tool_use", 95, "died mid-tool (400 thinking-block)"),
+        ("vault-sync", "blocked", "assistant:thinking", 720, "busy 12m, transcript frozen"),
+        ("davinci-edit", "working", "assistant:tool_use", 3, "running a tool"),
+        ("growth-graph", "working", "user:tool_result", 12, "processing"),
+        ("flote-api", "waiting", "assistant:text", 480, "turn done, waiting for you"),
+        ("note-autopost", "done", "assistant:text", 1500, "finished cleanly"),
+    ]
+    for i, (name, st, ev, age, _note) in enumerate(synthetic):
+        s.upsert_lead({
+            "session_id": f"demo{i:02d}-0000-0000-0000-{i:012d}", "pid": 10000 + i,
+            "name": name, "cwd": "/Users/example", "domain": f"-Users-example-{name}",
+            "raw_status": "busy" if st in ("working", "blocked") else "idle",
+            "derived_state": st, "last_event": ev,
+            "last_mtime": now - age, "started_at": now - age - 1000,
+        })
+    s.close()
+    port = int(argv[0]) if argv else 8899
+    print("overseer demo: synthetic board (every state). Real data is NOT shown here.")
+    return web.serve(port=port, poll=False, db_path=demo_db)
+
+
 def cmd_doctor(store: Store) -> int:
     """`overseer doctor` — environment self-check."""
     import shutil
@@ -162,6 +201,9 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_restart(store, argv[1:])
         if cmd == "doctor":
             return cmd_doctor(store)
+        if cmd == "demo":
+            store.close()
+            return cmd_demo(argv[1:])
         print(f"unknown command: {cmd}", file=sys.stderr)
         return 2
     finally:

@@ -1,8 +1,9 @@
-node_modules/
 __pycache__/
-*.pyc
-.venv/
-data/*.db
-*.log
 .DS_Store
 .gstack/
+.venv/
+*.log
+*.pyc
+data/*.db
+data/demo.db
+node_modules/

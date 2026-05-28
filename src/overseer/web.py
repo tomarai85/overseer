@@ -132,14 +132,17 @@ def make_handler(db_path):
     return Handler
 
 
-def serve(host: str = "127.0.0.1", port: int = 8899, interval: float = 5.0) -> int:
+def serve(host: str = "127.0.0.1", port: int = 8899, interval: float = 5.0,
+          poll: bool = True, db_path=None) -> int:
     # The poll thread owns one writer connection. Each HTTP request opens its
     # own short-lived reader connection (sqlite is not thread-shareable).
-    writer = Store()
+    # poll=False serves a static db (used by `overseer demo`).
+    writer = Store(db_path) if db_path else Store()
     db_path = writer.db_path
     stop = threading.Event()
-    t = threading.Thread(target=_poll_loop, args=(writer, interval, stop), daemon=True)
-    t.start()
+    if poll:
+        t = threading.Thread(target=_poll_loop, args=(writer, interval, stop), daemon=True)
+        t.start()
     httpd = None
     for p in range(port, port + 10):  # try a few ports if the first is taken
         try:
@@ -153,7 +156,8 @@ def serve(host: str = "127.0.0.1", port: int = 8899, interval: float = 5.0) -> i
         stop.set()
         writer.close()
         return 1
-    print(f"overseer: dashboard at http://{host}:{port}  (poll {interval}s, Ctrl-C to stop)", flush=True)
+    mode = f"poll {interval}s" if poll else "static (demo)"
+    print(f"overseer: dashboard at http://{host}:{port}  ({mode}, Ctrl-C to stop)", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
