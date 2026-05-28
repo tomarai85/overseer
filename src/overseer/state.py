@@ -34,7 +34,13 @@ PROJECTS_DIR = Path.home() / ".claude" / "projects"
 CONVERSATIONAL = {"user", "assistant"}
 
 # Seconds. Conservative on purpose — false 'blocked'/'crashed' is costly.
-STALE_BLOCKED_SEC = 600.0   # busy + no transcript write for 10min -> suspect hung
+# NOTE (Codex 2026-05-29): mtime is NOT a reliable progress signal — long thinking
+# or long tool execution can write nothing (looks stale), and housekeeping/noise
+# writes can update it (looks fresh). These thresholds are heuristics for the MVP;
+# the trustworthy answer is the per-session lease/heartbeat contract in docs/STATE-TRUTH.md.
+STALE_BLOCKED_SEC = 600.0       # busy + no transcript write for 10min -> suspect hung
+NEEDS_HUMAN_MIN_AGE = 10.0      # idle+tool_use must persist this long before alerting
+                                # (avoids the "tool emitted, result not yet written" race)
 
 
 def _pid_alive(pid: int | None) -> bool:
@@ -119,12 +125,18 @@ def derive(lead: Any) -> dict[str, Any]:
     last_event = f"{role}:{blocks[-1]}" if role and blocks else (role or "unknown")
 
     raw = (lead.raw_status or "").lower()
-    alive = _pid_alive(lead.pid)
+    # Codex 2026-05-29: a session listed by `claude agents --json` is live by
+    # definition, so only trust a dead-pid signal when we actually HAVE a pid.
+    # pid=None => assume alive (the roster vouched for it). Disappearance from the
+    # roster is handled separately by store.mark_gone, not here.
+    alive = True if lead.pid is None else _pid_alive(lead.pid)
 
     # ---- conservative state machine ----
     if not alive:
-        # pid gone. Clean turn-end -> done; anything else -> crashed.
-        state = "done" if (role == "assistant" and not ended_tool_use) else "crashed"
+        # Only the unambiguous mid-tool death reads as 'crashed'. A clean
+        # assistant text end, a trailing user/tool_result, or a missing
+        # transcript reads as 'done' (Codex: avoid false crashed).
+        state = "crashed" if ended_tool_use else "done"
     elif raw == "busy":
         if age is not None and age > STALE_BLOCKED_SEC:
             state = "blocked"            # alive + busy but transcript frozen -> hung suspect
@@ -135,7 +147,10 @@ def derive(lead: Any) -> dict[str, Any]:
         if role == "user":
             state = "working"            # human just spoke; agent about to respond
         elif role == "assistant" and ended_tool_use:
-            state = "needs-human"        # paused on a tool/permission step
+            # idle + last block tool_use: could be a real permission/input wait,
+            # OR a transient tail race (tool just emitted, result not written yet).
+            # Require it to have persisted before alerting, to avoid notify spam.
+            state = "needs-human" if (age is not None and age > NEEDS_HUMAN_MIN_AGE) else "working"
         elif role == "assistant":
             state = "waiting"            # turn complete, waiting for Tom's next prompt
         elif raw == "idle":

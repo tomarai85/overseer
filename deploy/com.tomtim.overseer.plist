@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Overseer daemon launchd template. TEMPLATE ONLY — not loaded by Overseer.
+  Tom installs manually when ready:
+
+    cp deploy/com.overseer.web.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.overseer.web.plist
+    # dashboard then lives at http://127.0.0.1:8899
+
+  Edit the python3 path / repo path below if they differ on your machine.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.overseer.web</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/env</string>
+        <string>python3</string>
+        <string>-m</string>
+        <string>overseer.cli</string>
+        <string>serve</string>
+        <string>8899</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__OVERSEER_HOME__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONPATH</key>
+        <string>__OVERSEER_HOME__/src</string>
+        <key>OVERSEER_NOTIFY</key>
+        <string>1</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>__OVERSEER_HOME__/data/overseer.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__OVERSEER_HOME__/data/overseer.err.log</string>
+</dict>
+</plist>
