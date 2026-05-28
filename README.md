@@ -59,7 +59,28 @@ skipping the noise record types (`mode`, `permission-mode`, `system`,
 that with `os.kill(pid, 0)` liveness and file mtime age. Rules live in `state.py`; they
 are deliberately conservative — a false `crashed` or false `restart` is expensive.
 
-Tested: `python3 tests/test_state.py` (8/8, stdlib runner; also pytest-compatible).
+Tested: `python3 tests/test_state.py` (14/14, stdlib runner; also pytest-compatible).
+
+### Make it trustworthy (opt-in lease hook — v2)
+
+mtime/transcript inference is a heuristic and it can lie. The real fix (Codex's
+"highest-leverage" recommendation) is to have each session **report** its phase via a
+Claude Code hook. `hooks/overseer-lease.py` does this; when a fresh lease exists,
+Overseer trusts it over the heuristic (`src/overseer/lease.py`, `state.py`).
+
+To enable, add the hook to *your* `~/.claude/settings.json` (Overseer never edits it):
+
+```json
+"hooks": {
+  "PreToolUse":      [{"hooks":[{"type":"command","command":"python3 ~/overseer/hooks/overseer-lease.py tool_running"}]}],
+  "PostToolUse":     [{"hooks":[{"type":"command","command":"python3 ~/overseer/hooks/overseer-lease.py working"}]}],
+  "UserPromptSubmit":[{"hooks":[{"type":"command","command":"python3 ~/overseer/hooks/overseer-lease.py working"}]}],
+  "Stop":            [{"hooks":[{"type":"command","command":"python3 ~/overseer/hooks/overseer-lease.py waiting"}]}],
+  "Notification":    [{"hooks":[{"type":"command","command":"python3 ~/overseer/hooks/overseer-lease.py needs-human"}]}]
+}
+```
+
+The hook only writes to `data/leases/`, reads nothing sensitive, and always exits 0.
 
 ## Layout
 

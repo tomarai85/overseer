@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from overseer import roster, state  # noqa: E402
+from overseer import lease, roster, state  # noqa: E402
 
 
 def _write_transcript(dirpath: Path, sid: str, records: list[dict]) -> Path:
@@ -38,12 +38,19 @@ NOISE = [{"type": "system"}, {"type": "mode"}, {"type": "permission-mode"},
          {"type": "file-history-snapshot"}]
 
 
-def _derive(tmp: Path, sid: str, records, *, pid, raw, mtime_age=0.0):
+def _derive(tmp: Path, sid: str, records, *, pid, raw, mtime_age=0.0, lease_rec=None):
     f = _write_transcript(tmp, sid, records)
     if mtime_age:
         old = time.time() - mtime_age
         os.utime(f, (old, old))
     state.PROJECTS_DIR = tmp  # monkeypatch
+    lease.LEASE_DIR = tmp / "leases"  # isolate leases per test run
+    lp = lease.lease_path(sid)
+    if lease_rec is not None:
+        lease.LEASE_DIR.mkdir(parents=True, exist_ok=True)
+        lp.write_text(json.dumps(lease_rec))
+    elif lp.exists():
+        lp.unlink()
     lead = roster.Lead(session_id=sid, pid=pid, raw_status=raw)
     return state.derive(lead)["derived_state"]
 
@@ -84,6 +91,19 @@ def run(tmp: Path) -> list[tuple[str, bool, str]]:
          "blocked"),
         ("null status + fresh -> working",
          _derive(tmp, "s8", NOISE + [_assistant(["text"])], pid=live, raw=None),
+         "waiting"),
+        # ---- v2 lease overrides heuristic ----
+        ("lease fresh 'needs-human' overrides heuristic (transcript says working)",
+         _derive(tmp, "l1", NOISE + [_assistant(["tool_use"])], pid=live, raw="busy",
+                 lease_rec={"session_id": "l1", "phase": "needs-human", "ts": time.time()}),
+         "needs-human"),
+        ("lease 'tool_running' + pid dead -> crashed",
+         _derive(tmp, "l2", NOISE + [_assistant(["text"])], pid=dead, raw="idle",
+                 lease_rec={"session_id": "l2", "phase": "tool_running", "ts": time.time()}),
+         "crashed"),
+        ("stale lease ignored -> falls back to heuristic (waiting)",
+         _derive(tmp, "l3", NOISE + [_assistant(["text"])], pid=live, raw="idle",
+                 lease_rec={"session_id": "l3", "phase": "working", "ts": time.time() - 9999}),
          "waiting"),
     ]
     results = []

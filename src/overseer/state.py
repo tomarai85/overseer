@@ -26,6 +26,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from . import lease
+
 
 PROJECTS_DIR = Path.home() / ".claude" / "projects"
 
@@ -131,7 +133,23 @@ def derive(lead: Any) -> dict[str, Any]:
     # roster is handled separately by store.mark_gone, not here.
     alive = True if lead.pid is None else _pid_alive(lead.pid)
 
-    # ---- conservative state machine ----
+    # ---- v2: prefer an explicit hook-reported lease over transcript heuristics ----
+    # (Codex's highest-leverage fix; see docs/STATE-TRUTH.md + hooks/overseer-lease.py)
+    lrec = lease.read(lead.session_id)
+    if lrec and lease.is_fresh(lrec, now):
+        phase = lrec.get("phase", "")
+        if not alive:
+            state = "crashed" if phase in lease.ACTIVE_PHASES else "done"
+        else:
+            state = lease.PHASE_TO_STATE.get(phase, "working")
+        return {
+            "domain": domain,
+            "derived_state": state,
+            "last_event": f"lease:{phase}",
+            "last_mtime": last_mtime,
+        }
+
+    # ---- fallback: conservative transcript heuristic (un-instrumented sessions) ----
     if not alive:
         # Only the unambiguous mid-tool death reads as 'crashed'. A clean
         # assistant text end, a trailing user/tool_result, or a missing
