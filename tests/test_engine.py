@@ -51,13 +51,55 @@ def run():
     return res
 
 
+def run_threadsafety():
+    """Regression test for the serve poll-thread sqlite bug (2026-05-29).
+
+    The writer connection must be opened INSIDE the poll thread. If it isn't,
+    every write throws (check_same_thread) and is swallowed, leaving the db empty.
+    This drives _poll_loop in a thread and asserts the db actually gets written.
+    """
+    import threading
+    import time as _time
+    from overseer import web
+    from overseer.store import Store
+
+    res = []
+    tmp = Path(tempfile.mkdtemp())
+    db = tmp / "poll.db"
+
+    roster.fetch = lambda: [roster.Lead(session_id="z", pid=1, raw_status="busy")]
+    state.derive = lambda lead: {"domain": "d", "derived_state": "working",
+                                 "last_event": "x", "last_mtime": 1.0}
+    stop = threading.Event()
+    t = threading.Thread(target=web._poll_loop, args=(str(db), 0.1, stop), daemon=True)
+    t.start()
+    deadline = _time.time() + 3
+    rows = []
+    while _time.time() < deadline:
+        if db.exists():
+            s = Store(db)
+            rows = s.all_leads()
+            s.close()
+            if rows:
+                break
+        _time.sleep(0.1)
+    stop.set()
+    res.append(("poll thread writes to db (no check_same_thread silent failure)", len(rows) == 1))
+    return res
+
+
 def test_engine():
     for name, ok in run():
         assert ok, name
 
 
+def test_threadsafety():
+    for name, ok in run_threadsafety():
+        assert ok, name
+
+
 if __name__ == "__main__":
-    rows = run()
+    rows = run() + run_threadsafety()
     passed = sum(1 for _, ok in rows if ok)
     for name, ok in rows:
         print(f"  {'PASS' if ok else 'FAIL'}  {name}")

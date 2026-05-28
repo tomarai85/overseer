@@ -140,7 +140,10 @@ def cmd_doctor(store: Store) -> int:
 def cmd_restart(store: Store, args: list[str]) -> int:
     """`overseer restart <session_id_prefix>` — DRY-RUN restart planner (no execution)."""
     from . import recover
-    scan_once(store)
+    try:
+        scan_once(store)
+    except roster.RosterError as e:
+        print(f"overseer: roster error: {e} (using last-known state)", file=sys.stderr)
     rows = {r["session_id"]: dict(r) for r in store.all_leads()}
     if not args:
         # show all restartable leads
