@@ -1,15 +1,21 @@
 """engine — one poll cycle: roster -> state-truth -> store, with transition logging."""
 from __future__ import annotations
 
+from typing import Callable
+
 from . import roster, state
 from .store import Store
 
+# Callback signature: (session_id, prev_state, new_state, label)
+TransitionCB = Callable[[str, str | None, str, str], None]
 
-def scan_once(store: Store) -> dict[str, int]:
+
+def scan_once(store: Store, on_transition: TransitionCB | None = None) -> dict[str, int]:
     """Fetch the live roster, derive state truth, persist, log transitions.
 
-    Returns a small summary dict of state counts. Never raises on a single
-    bad lead; roster fetch failure propagates (caller decides retry).
+    Returns a summary dict of state counts. `on_transition` (optional) is called
+    for every state change — used by the daemon/dashboard for notifications.
+    Never raises on a single bad lead; roster fetch failure propagates.
     """
     leads = roster.fetch()
     present_ids = []
@@ -29,15 +35,18 @@ def scan_once(store: Store) -> dict[str, int]:
         prev = store.upsert_lead(row)
         new_state = enrich["derived_state"]
         counts[new_state] = counts.get(new_state, 0) + 1
+        label = lead.name or enrich.get("domain") or lead.session_id[:8]
         if prev is not None and prev != new_state:
-            store.log_event(
-                lead.session_id, "transition", f"{prev} -> {new_state}"
-            )
+            store.log_event(lead.session_id, "transition", f"{prev} -> {new_state}")
+            if on_transition:
+                on_transition(lead.session_id, prev, new_state, label)
         elif prev is None:
             store.log_event(lead.session_id, "first_seen", new_state)
     gone = store.mark_gone(present_ids)
     for sid in gone:
         store.log_event(sid, "transition", "-> gone")
+        if on_transition:
+            on_transition(sid, None, "gone", sid[:8])
     if gone:
         counts["gone"] = counts.get("gone", 0) + len(gone)
     return counts

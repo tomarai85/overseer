@@ -11,7 +11,7 @@ import json
 import sys
 import time
 
-from . import roster
+from . import notify, roster
 from .engine import scan_once
 from .store import Store
 
@@ -71,7 +71,7 @@ def cmd_daemon(store: Store, interval: float = 5.0) -> int:
     print(f"overseer daemon: polling every {interval}s (Ctrl-C to stop)", file=sys.stderr)
     while True:
         try:
-            counts = scan_once(store)
+            counts = scan_once(store, on_transition=notify.on_transition)
             ts = time.strftime("%H:%M:%S")
             summary = " ".join(f"{k}={v}" for k, v in sorted(counts.items()))
             print(f"[{ts}] {summary}", file=sys.stderr)
@@ -94,6 +94,11 @@ def main(argv: list[str] | None = None) -> int:
         if cmd == "daemon":
             interval = float(argv[1]) if len(argv) > 1 else 5.0
             return cmd_daemon(store, interval)
+        if cmd == "serve":
+            from . import web
+            store.close()  # serve manages its own connections (threaded)
+            port = int(argv[1]) if len(argv) > 1 else 8899
+            return web.serve(port=port)
         print(f"unknown command: {cmd}", file=sys.stderr)
         return 2
     finally:
