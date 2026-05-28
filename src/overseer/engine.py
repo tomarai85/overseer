@@ -22,26 +22,35 @@ def scan_once(store: Store, on_transition: TransitionCB | None = None) -> dict[s
     counts: dict[str, int] = {}
     for lead in leads:
         present_ids.append(lead.session_id)
-        enrich = state.derive(lead)
-        row = {
-            "session_id": lead.session_id,
-            "pid": lead.pid,
-            "name": lead.name,
-            "cwd": lead.cwd,
-            "raw_status": lead.raw_status,
-            "started_at": lead.started_at,
-            **enrich,
-        }
-        prev = store.upsert_lead(row)
-        new_state = enrich["derived_state"]
-        counts[new_state] = counts.get(new_state, 0) + 1
-        label = lead.name or enrich.get("domain") or lead.session_id[:8]
-        if prev is not None and prev != new_state:
-            store.log_event(lead.session_id, "transition", f"{prev} -> {new_state}")
-            if on_transition:
-                on_transition(lead.session_id, prev, new_state, label)
-        elif prev is None:
-            store.log_event(lead.session_id, "first_seen", new_state)
+        # Guard per lead: a single bad transcript / derive error must not abort
+        # the whole scan (the poll loop has to survive one weird session).
+        try:
+            enrich = state.derive(lead)
+            row = {
+                "session_id": lead.session_id,
+                "pid": lead.pid,
+                "name": lead.name,
+                "cwd": lead.cwd,
+                "raw_status": lead.raw_status,
+                "started_at": lead.started_at,
+                **enrich,
+            }
+            prev = store.upsert_lead(row)
+            new_state = enrich["derived_state"]
+            counts[new_state] = counts.get(new_state, 0) + 1
+            label = lead.name or enrich.get("domain") or lead.session_id[:8]
+            if prev is not None and prev != new_state:
+                store.log_event(lead.session_id, "transition", f"{prev} -> {new_state}")
+                if on_transition:
+                    on_transition(lead.session_id, prev, new_state, label)
+            elif prev is None:
+                store.log_event(lead.session_id, "first_seen", new_state)
+        except Exception as e:
+            counts["error"] = counts.get("error", 0) + 1
+            try:
+                store.log_event(lead.session_id, "scan_error", str(e)[:200])
+            except Exception:
+                pass
     gone = store.mark_gone(present_ids)
     for sid in gone:
         store.log_event(sid, "transition", "-> gone")

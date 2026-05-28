@@ -85,15 +85,23 @@ tick();setInterval(tick,2000);
 </script></body></html>"""
 
 
-def _poll_loop(store: Store, interval: float, stop: threading.Event) -> None:
-    while not stop.is_set():
-        try:
-            scan_once(store, on_transition=notify.on_transition)
-        except roster.RosterError:
-            pass
-        except Exception:
-            pass
-        stop.wait(interval)
+def _poll_loop(db_path, interval: float, stop: threading.Event) -> None:
+    # IMPORTANT: open the writer connection INSIDE this thread. sqlite3
+    # connections are bound to their creating thread (check_same_thread), so a
+    # connection made in serve()'s main thread would fail every write here —
+    # silently, since the loop swallows exceptions — leaving the board frozen.
+    store = Store(db_path)
+    try:
+        while not stop.is_set():
+            try:
+                scan_once(store, on_transition=notify.on_transition)
+            except roster.RosterError:
+                pass
+            except Exception:
+                pass
+            stop.wait(interval)
+    finally:
+        store.close()
 
 
 def make_handler(db_path):
@@ -134,14 +142,16 @@ def make_handler(db_path):
 
 def serve(host: str = "127.0.0.1", port: int = 8899, interval: float = 5.0,
           poll: bool = True, db_path=None) -> int:
-    # The poll thread owns one writer connection. Each HTTP request opens its
-    # own short-lived reader connection (sqlite is not thread-shareable).
-    # poll=False serves a static db (used by `overseer demo`).
-    writer = Store(db_path) if db_path else Store()
-    db_path = writer.db_path
+    # Resolve the db path (a brief connection just to learn the default path),
+    # then hand the PATH (not a connection) to threads. The poll thread and each
+    # HTTP request open their own connections, because sqlite connections are
+    # bound to their creating thread. poll=False serves a static db (demo).
+    probe = Store(db_path) if db_path else Store()
+    db_path = probe.db_path
+    probe.close()
     stop = threading.Event()
     if poll:
-        t = threading.Thread(target=_poll_loop, args=(writer, interval, stop), daemon=True)
+        t = threading.Thread(target=_poll_loop, args=(db_path, interval, stop), daemon=True)
         t.start()
     httpd = None
     for p in range(port, port + 10):  # try a few ports if the first is taken
@@ -154,7 +164,6 @@ def serve(host: str = "127.0.0.1", port: int = 8899, interval: float = 5.0,
     if httpd is None:
         print(f"overseer: ports {port}-{port + 9} all in use", flush=True)
         stop.set()
-        writer.close()
         return 1
     mode = f"poll {interval}s" if poll else "static (demo)"
     print(f"overseer: dashboard at http://{host}:{port}  ({mode}, Ctrl-C to stop)", flush=True)
@@ -165,5 +174,4 @@ def serve(host: str = "127.0.0.1", port: int = 8899, interval: float = 5.0,
     finally:
         stop.set()
         httpd.server_close()
-        writer.close()
     return 0
