@@ -59,7 +59,7 @@ skipping the noise record types (`mode`, `permission-mode`, `system`,
 that with `os.kill(pid, 0)` liveness and file mtime age. Rules live in `state.py`; they
 are deliberately conservative — a false `crashed` or false `restart` is expensive.
 
-Tested: `python3 tests/test_state.py` (14/14, stdlib runner; also pytest-compatible).
+Tested: `python3 tests/test_state.py` (32 total, stdlib runner; also pytest-compatible).
 
 ### Make it trustworthy (opt-in lease hook — v2)
 
