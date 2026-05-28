@@ -1,0 +1,101 @@
+"""Unit tests for the STATE TRUTH derivation.
+
+Runnable two ways:
+  python3 -m pytest tests/            (if pytest present)
+  PYTHONPATH=src python3 tests/test_state.py   (plain, no deps)
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from overseer import roster, state  # noqa: E402
+
+
+def _write_transcript(dirpath: Path, sid: str, records: list[dict]) -> Path:
+    proj = dirpath / "-Users-example-testproj"
+    proj.mkdir(parents=True, exist_ok=True)
+    f = proj / f"{sid}.jsonl"
+    f.write_text("\n".join(json.dumps(r) for r in records))
+    return f
+
+
+def _assistant(blocks: list[str]) -> dict:
+    return {"type": "assistant", "message": {"role": "assistant",
+            "content": [{"type": b} for b in blocks]}}
+
+
+def _user(text: str = "hi") -> dict:
+    return {"type": "user", "message": {"role": "user", "content": text}}
+
+
+NOISE = [{"type": "system"}, {"type": "mode"}, {"type": "permission-mode"},
+         {"type": "file-history-snapshot"}]
+
+
+def _derive(tmp: Path, sid: str, records, *, pid, raw, mtime_age=0.0):
+    f = _write_transcript(tmp, sid, records)
+    if mtime_age:
+        old = time.time() - mtime_age
+        os.utime(f, (old, old))
+    state.PROJECTS_DIR = tmp  # monkeypatch
+    lead = roster.Lead(session_id=sid, pid=pid, raw_status=raw)
+    return state.derive(lead)["derived_state"]
+
+
+def run(tmp: Path) -> list[tuple[str, bool, str]]:
+    live = os.getpid()
+    dead = 999_999_999
+    cases = [
+        ("working: busy + tool_use + fresh",
+         _derive(tmp, "s1", NOISE + [_assistant(["thinking", "text", "tool_use"])], pid=live, raw="busy"),
+         "working"),
+        ("waiting: idle + assistant text turn-end",
+         _derive(tmp, "s2", NOISE + [_assistant(["text"])], pid=live, raw="idle"),
+         "waiting"),
+        ("needs-human: idle + assistant ended on tool_use",
+         _derive(tmp, "s3", NOISE + [_assistant(["text", "tool_use"])], pid=live, raw="idle"),
+         "needs-human"),
+        ("working: idle but last record is user (about to respond)",
+         _derive(tmp, "s4", NOISE + [_user()], pid=live, raw="idle"),
+         "working"),
+        ("crashed: pid dead, last was mid-tool",
+         _derive(tmp, "s5", NOISE + [_assistant(["tool_use"])], pid=dead, raw="busy"),
+         "crashed"),
+        ("done: pid dead, clean assistant text end",
+         _derive(tmp, "s6", NOISE + [_assistant(["text"])], pid=dead, raw="idle"),
+         "done"),
+        ("blocked: busy but transcript stale 20min",
+         _derive(tmp, "s7", NOISE + [_assistant(["tool_use"])], pid=live, raw="busy", mtime_age=1200),
+         "blocked"),
+        ("null status + fresh -> working",
+         _derive(tmp, "s8", NOISE + [_assistant(["text"])], pid=live, raw=None),
+         "waiting"),
+    ]
+    results = []
+    for name, got, want in cases:
+        results.append((name, got == want, f"got={got} want={want}"))
+    return results
+
+
+def test_state_machine(tmp_path=None):
+    import tempfile
+    tmp = Path(tmp_path) if tmp_path else Path(tempfile.mkdtemp())
+    for name, ok, detail in run(tmp):
+        assert ok, f"{name}: {detail}"
+
+
+if __name__ == "__main__":
+    import tempfile
+    tmp = Path(tempfile.mkdtemp())
+    rows = run(tmp)
+    passed = sum(1 for _, ok, _ in rows if ok)
+    for name, ok, detail in rows:
+        print(f"  {'PASS' if ok else 'FAIL'}  {name}  ({detail})")
+    print(f"\n{passed}/{len(rows)} passed")
+    sys.exit(0 if passed == len(rows) else 1)

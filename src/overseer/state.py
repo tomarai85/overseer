@@ -1,16 +1,22 @@
 """state — STATE TRUTH derivation (the hard core, per Codex's warning).
 
-`claude agents --json` only gives busy/idle. The real states a meta-orchestrator
-needs are: idle / busy / blocked / needs-human / crashed / done. We derive them
-from three observable signals, conservatively (a wrong 'crashed' is expensive):
+`claude agents --json` only gives busy/idle (and sometimes null). The states a
+meta-orchestrator actually needs are: working / waiting / needs-human / blocked /
+crashed / done. We derive them from three observable signals, conservatively
+(a wrong 'crashed' or 'blocked' is expensive):
 
-  1. pid liveness         -> os.kill(pid, 0)
-  2. transcript last event-> ~/.claude/projects/<slug>/<sessionId>.jsonl last line
-  3. transcript mtime age -> staleness
+  1. pid liveness          -> os.kill(pid, 0)
+  2. last CONVERSATIONAL    -> last user/assistant record in the transcript,
+     transcript record         skipping the noise types (mode, permission-mode,
+                                system, file-history-snapshot, attachment,
+                                last-prompt, ai-title, queue-operation, agent-name)
+  3. transcript mtime age  -> staleness
 
-Conservative bias: only call 'crashed' when pid is truly gone. Only call
-'blocked' when busy + transcript stale beyond a long threshold. When unsure,
-fall back to the raw status. Never fabricate certainty.
+Calibrated against real transcripts 2026-05-29:
+  - a working session's last conversational record is an assistant message whose
+    final content block is `tool_use` (it is mid-tool), and mtime is fresh.
+  - an idle session's tail is mostly system/mode noise; the last conversational
+    record is an assistant `text` turn (it finished, waiting for the human).
 """
 from __future__ import annotations
 
@@ -23,13 +29,12 @@ from typing import Any
 
 PROJECTS_DIR = Path.home() / ".claude" / "projects"
 
-# Thresholds (seconds). Conservative on purpose.
-STALE_BLOCKED_SEC = 300.0   # busy but no transcript write for 5min -> suspect blocked/hung
-DONE_GRACE_SEC = 5.0
+# Conversational record types. Everything else in the transcript is noise for
+# the purpose of "what is this session waiting on right now".
+CONVERSATIONAL = {"user", "assistant"}
 
-# Last-event types (from Claude Code transcript jsonl) that imply waiting on human.
-# These are heuristic; refined in S2 against real transcripts.
-NEEDS_HUMAN_HINTS = ("tool_use", "permission", "question", "ask")
+# Seconds. Conservative on purpose — false 'blocked'/'crashed' is costly.
+STALE_BLOCKED_SEC = 600.0   # busy + no transcript write for 10min -> suspect hung
 
 
 def _pid_alive(pid: int | None) -> bool:
@@ -41,13 +46,12 @@ def _pid_alive(pid: int | None) -> bool:
     except ProcessLookupError:
         return False
     except PermissionError:
-        return True  # exists but owned by another user
+        return True
     except OSError:
         return False
 
 
 def find_transcript(session_id: str) -> Path | None:
-    """Locate ~/.claude/projects/*/<session_id>.jsonl (newest if multiple)."""
     if not session_id or not PROJECTS_DIR.exists():
         return None
     matches = list(PROJECTS_DIR.glob(f"*/{session_id}.jsonl"))
@@ -56,77 +60,89 @@ def find_transcript(session_id: str) -> Path | None:
     return max(matches, key=lambda p: p.stat().st_mtime)
 
 
-def _last_jsonl_record(path: Path, max_tail_bytes: int = 65536) -> dict[str, Any] | None:
-    """Read the last valid JSON object from a (possibly large) jsonl file."""
+def _tail_records(path: Path, max_tail_bytes: int = 262144) -> list[dict[str, Any]]:
+    """Parse the last chunk of a jsonl file into record dicts (in file order)."""
     try:
         size = path.stat().st_size
         with open(path, "rb") as f:
             if size > max_tail_bytes:
                 f.seek(-max_tail_bytes, os.SEEK_END)
-            tail = f.read().decode("utf-8", errors="ignore")
+                f.readline()  # discard partial first line
+            data = f.read().decode("utf-8", errors="ignore")
     except OSError:
-        return None
-    for line in reversed(tail.splitlines()):
+        return []
+    out = []
+    for line in data.splitlines():
         line = line.strip()
         if not line:
             continue
         try:
-            return json.loads(line)
+            out.append(json.loads(line))
         except json.JSONDecodeError:
             continue
+    return out
+
+
+def _record_role_and_blocks(rec: dict[str, Any]) -> tuple[str | None, list[str]]:
+    msg = rec.get("message") if isinstance(rec.get("message"), dict) else {}
+    role = msg.get("role") or rec.get("role") or rec.get("type")
+    content = msg.get("content")
+    blocks: list[str] = []
+    if isinstance(content, list):
+        blocks = [b.get("type") for b in content if isinstance(b, dict) and b.get("type")]
+    elif isinstance(content, str):
+        blocks = ["text"]
+    return role, blocks
+
+
+def last_conversational(records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for rec in reversed(records):
+        if rec.get("type") in CONVERSATIONAL:
+            return rec
     return None
 
 
-def _last_event_kind(record: dict[str, Any] | None) -> str:
-    if not record:
-        return "unknown"
-    # Claude transcript records vary; probe the common shape.
-    t = record.get("type") or record.get("role") or ""
-    msg = record.get("message")
-    if isinstance(msg, dict):
-        role = msg.get("role")
-        content = msg.get("content")
-        if isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "tool_use":
-                    return f"{role or t}:tool_use"
-        if role:
-            return str(role)
-    return str(t) if t else "unknown"
-
-
 def derive(lead: Any) -> dict[str, Any]:
-    """Given a roster.Lead, return enrichment dict for store.upsert_lead.
-
-    Returns keys: domain, derived_state, last_event, last_mtime.
-    `lead` is duck-typed (has .session_id, .pid, .raw_status).
+    """Given a roster.Lead, return enrichment for store.upsert_lead:
+    keys = domain, derived_state, last_event, last_mtime.
     """
     now = time.time()
     transcript = find_transcript(lead.session_id)
     domain = transcript.parent.name if transcript else None
     last_mtime = transcript.stat().st_mtime if transcript else None
-    record = _last_jsonl_record(transcript) if transcript else None
-    last_event = _last_event_kind(record)
     age = (now - last_mtime) if last_mtime else None
+
+    records = _tail_records(transcript) if transcript else []
+    conv = last_conversational(records)
+    role, blocks = _record_role_and_blocks(conv) if conv else (None, [])
+    ended_tool_use = bool(blocks) and blocks[-1] == "tool_use"
+    last_event = f"{role}:{blocks[-1]}" if role and blocks else (role or "unknown")
 
     raw = (lead.raw_status or "").lower()
     alive = _pid_alive(lead.pid)
 
-    # --- conservative state machine ---
+    # ---- conservative state machine ----
     if not alive:
-        # pid gone. If transcript ended cleanly we call it done, else crashed.
-        state = "done" if last_event in ("assistant", "summary") else "crashed"
-    elif raw == "busy" and age is not None and age > STALE_BLOCKED_SEC:
-        state = "blocked"  # alive + busy but transcript hasn't moved -> hung suspect
-    elif raw == "idle" and ("tool_use" in last_event or last_event in ("user",)):
-        # idle right after a tool_use / mid-exchange often means waiting on human input
-        state = "needs-human"
+        # pid gone. Clean turn-end -> done; anything else -> crashed.
+        state = "done" if (role == "assistant" and not ended_tool_use) else "crashed"
     elif raw == "busy":
-        state = "busy"
-    elif raw == "idle":
-        state = "idle"
+        if age is not None and age > STALE_BLOCKED_SEC:
+            state = "blocked"            # alive + busy but transcript frozen -> hung suspect
+        else:
+            state = "working"
     else:
-        state = raw or "unknown"
+        # idle, or null status — derive from the conversation
+        if role == "user":
+            state = "working"            # human just spoke; agent about to respond
+        elif role == "assistant" and ended_tool_use:
+            state = "needs-human"        # paused on a tool/permission step
+        elif role == "assistant":
+            state = "waiting"            # turn complete, waiting for Tom's next prompt
+        elif raw == "idle":
+            state = "waiting"
+        else:
+            # null status + no conversational record: fall back on freshness
+            state = "working" if (age is not None and age < 60) else "waiting"
 
     return {
         "domain": domain,

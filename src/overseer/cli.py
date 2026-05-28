@@ -16,13 +16,13 @@ from .engine import scan_once
 from .store import Store
 
 
-# state -> (emoji, sort priority: needs-human/crashed float to top)
+# state -> (label, sort priority: things that need Tom float to the top)
 _STATE_GLYPH = {
     "needs-human": ("[!] needs-you", 0),
     "crashed": ("[x] crashed", 1),
     "blocked": ("[~] blocked?", 2),
-    "busy": ("[>] working", 3),
-    "idle": ("[.] idle", 4),
+    "waiting": ("[.] waiting", 3),
+    "working": ("[>] working", 4),
     "done": ("[v] done", 5),
     "gone": ("[ ] gone", 6),
     "unknown": ("[?] unknown", 7),
