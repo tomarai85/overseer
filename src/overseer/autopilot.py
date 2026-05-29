@@ -57,23 +57,36 @@ def nudge_once(child: str, prompt: str, ignore_needs_human: bool = False) -> tup
 
 def run(child: str, prompt: str, every: float = 120.0, max_nudges: int = 10,
         ignore_needs_human: bool = False, on_event=None,
-        _sleep=time.sleep) -> dict:
+        max_runtime: float = 3600.0, _sleep=time.sleep, _now=time.monotonic) -> dict:
     """Nudge the child each time it is quiescent, up to max_nudges. Stops on
-    needs-human (unless ignored), or when the child is gone. Blocking loop."""
+    needs-human (unless ignored), when the child is gone, when ownership is lost, or
+    after max_runtime seconds — a child that never goes quiescent ('working'/'unknown'
+    forever) must not loop unbounded in time (review LOW). Blocking loop."""
     if not driver.is_owned(child):
         raise AutopilotError(f"'{child}' is not an Overseer-owned child")
     if not (prompt and prompt.strip()):
         raise AutopilotError("empty continuation prompt")
 
     nudges = 0
-    _audit("start", child, f"every={every} max={max_nudges}")
+    start = _now()
+    _audit("start", child, f"every={every} max={max_nudges} runtime={max_runtime}")
     while nudges < max_nudges:
+        if max_runtime and (_now() - start) > max_runtime:
+            _audit("stop-runtime", child, f"nudges={nudges}")
+            return {"child": child, "nudges": nudges, "stopped": "max_runtime"}
         if not driver.exists(child):
             _audit("stop-gone", child)
             if on_event:
                 on_event("gone", child, "gone", nudges)
             return {"child": child, "nudges": nudges, "stopped": "gone"}
-        action, st = nudge_once(child, prompt, ignore_needs_human)
+        try:
+            action, st = nudge_once(child, prompt, ignore_needs_human)
+        except AutopilotError:                          # ownership lost mid-loop -> stop
+            _audit("stop-unowned", child)
+            return {"child": child, "nudges": nudges, "stopped": "unowned"}
+        except (relay.RelayError, driver.DriverError) as e:  # transient (state flip / tmux blip)
+            _audit("nudge-error", child, str(e)[:80])
+            action, st = "waited", "error"              # fail-safe: don't crash the loop
         if on_event:
             on_event(action, child, st, nudges + (1 if action == "nudged" else 0))
         if action == "nudged":

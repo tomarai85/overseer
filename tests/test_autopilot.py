@@ -56,6 +56,17 @@ relay.pane_state = fake_pane_state
 NOOP = lambda *_a, **_k: None
 
 
+def counter(step=10.0):
+    """Deterministic monotonic clock for time-based loop tests."""
+    box = [0.0]
+
+    def now():
+        v = box[0]
+        box[0] += step
+        return v
+    return now
+
+
 def reset():
     _sent.clear()
     _owned.clear()
@@ -119,6 +130,27 @@ check("run stops when child gone", res["stopped"] == "gone" and res["nudges"] ==
 # 10. run: refuses non-owned child
 reset()
 check("run refuses non-owned child", raises(lambda: autopilot.run("ghost", "go", _sleep=NOOP)))
+
+# 11. run: max_runtime stops a child that never goes quiescent (always 'working')
+reset(); _owned.add("w"); _alive.add("w"); _states[:] = ["working"] * 50
+res = autopilot.run("w", "go", every=0, max_nudges=99, max_runtime=25,
+                    _sleep=NOOP, _now=counter(10))
+check("run honors max_runtime (stuck child)",
+      res["stopped"] == "max_runtime" and res["nudges"] == 0)
+
+# 12. run survives a RelayError from tell mid-loop (state flip) without crashing
+reset(); _owned.add("w"); _alive.add("w"); _states[:] = ["waiting"] * 50
+
+
+def _raise_tell(*_a, **_k):
+    raise relay.RelayError("flipped to working between check and send")
+
+
+relay.tell = _raise_tell
+res = autopilot.run("w", "go", every=0, max_nudges=99, max_runtime=25,
+                    _sleep=NOOP, _now=counter(10))
+relay.tell = fake_tell  # restore
+check("run survives tell RelayError (no crash)", res["stopped"] == "max_runtime")
 
 print(f"\n{PASS}/{PASS + FAIL} passed")
 sys.exit(0 if FAIL == 0 else 1)
