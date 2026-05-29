@@ -345,7 +345,7 @@ struct WorkerView: View {
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
-                Text(c.workerScreen.isEmpty ? "(reading\u{2026})" : c.workerScreen)
+                Text(c.workerScreen.isEmpty ? "(reading\u{2026})" : cleanedScreen(c.workerScreen))
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -409,4 +409,24 @@ struct NewWorkerSheet: View {
         }
         .padding(20).frame(width: 440)
     }
+}
+
+/// Strip the Claude TUI chrome (box-drawing, welcome banner, bottom status bar)
+/// from a captured pane so the worker view shows just the conversation.
+func cleanedScreen(_ raw: String) -> String {
+    let box = CharacterSet(charactersIn: "\u{2502}\u{256d}\u{256e}\u{2570}\u{256f}\u{2500}\u{2501}\u{2504}\u{2508} \u{2590}\u{259b}\u{259c}\u{258c}\u{259d}\u{2598}\u{2580}\t")
+    let noise = ["bypass permissions", "Welcome back", "Tips for getting started",
+                 "/release-notes", "MCP server", "What's new", "Opus 4.8 is here",
+                 "Claude Code v", "for agents", "shift+tab"]
+    var out: [String] = []
+    var blanks = 0
+    for line in raw.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
+        let s = line.trimmingCharacters(in: box)
+        if s.isEmpty { blanks += 1; if blanks <= 1 { out.append("") }; continue }
+        blanks = 0
+        if s.hasPrefix("Weekly ") || s.hasPrefix("Code ") { continue }
+        if noise.contains(where: { s.contains($0) }) { continue }
+        out.append(s)
+    }
+    return out.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
 }
