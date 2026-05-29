@@ -39,6 +39,16 @@ struct GuardAlert: Decodable, Hashable, Identifiable {
 
 struct AlertsResult: Decodable { let alerts: [GuardAlert] }
 
+// One OPERATE action the parent took (spawn/send/kill/relay/...), for the live
+// "what is the parent doing" ticker shown during a turn.
+struct Activity: Decodable, Identifiable {
+    let ts: Double
+    let action: String
+    let target: String
+    let detail: String?
+    var id: String { "\(ts)-\(action)-\(target)" }
+}
+
 func alertGlyph(_ kind: String) -> String {
     switch kind {
     case "stalled":     return "◴"   // silent hang
@@ -88,10 +98,14 @@ final class Cockpit: ObservableObject {
     @Published var workerScreen = ""
     @Published var notify = true
     @Published var attention: [GuardAlert] = []   // the moat: stalled/spiraling/over-budget, surfaced
+    @Published var activity: [Activity] = []      // parent's live actions during a turn
+    @Published var elapsed = 0                    // seconds the current parent turn has run
 
     private var prevState: [String: String] = [:]
     private var lastNotified: [String: Double] = [:]
     private var polling = false   // single-flight: a slow poll must not overlap the next
+    private var sendStartEpoch: Double = 0
+    private var activityPolling = false
 
     nonisolated static let bin = NSHomeDirectory() + "/overseer/bin/overseer"
 
@@ -193,6 +207,9 @@ final class Cockpit: ObservableObject {
         guard !text.isEmpty, !sending else { return }
         input = ""
         messages.append(ChatMsg(role: "user", text: text, ts: Date().timeIntervalSince1970))
+        sendStartEpoch = Date().timeIntervalSince1970
+        elapsed = 0
+        activity = []
         sending = true
         Task.detached {
             let data = Self.run(["parent-send", text])
@@ -207,9 +224,38 @@ final class Cockpit: ObservableObject {
             await MainActor.run {
                 self.messages.append(ChatMsg(role: "parent", text: reply, ts: Date().timeIntervalSince1970))
                 self.sending = false
+                self.elapsed = 0
+                self.activity = []
                 self.refresh()
             }
         }
+    }
+
+    /// Pull the parent's recent OPERATE actions (spawn/send/kill/relay) so the chat
+    /// shows what it's doing mid-turn. While a turn is in flight, keep only actions
+    /// from THIS turn (ts >= start) so the ticker reflects the current work, not the
+    /// last turn's leftovers.
+    func refreshActivity() {
+        guard !activityPolling else { return }
+        activityPolling = true
+        let since = sendStartEpoch
+        let turnLive = sending
+        Task.detached {
+            let data = Self.run(["activity", "12"])
+            let list = (try? JSONDecoder().decode([Activity].self, from: data)) ?? []
+            await MainActor.run {
+                self.activity = turnLive ? list.filter { $0.ts >= since - 1 } : list
+                self.activityPolling = false
+            }
+        }
+    }
+
+    /// 1s tick while a parent turn runs: advance the elapsed counter (so the chat
+    /// reads "親 AI が操作中… 14s", not a frozen spinner) and refresh its actions.
+    func tickWork() {
+        guard sending else { return }
+        elapsed = max(0, Int(Date().timeIntervalSince1970 - sendStartEpoch))
+        refreshActivity()
     }
 
     /// Start a worker from the GUI (spawn waits for it to boot, then optionally
@@ -260,6 +306,7 @@ struct CockpitView: View {
     @StateObject private var c = Cockpit()
     private let tick = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
     private let attentionTick = Timer.publish(every: 20, on: .main, in: .common).autoconnect()
+    private let workTick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         NavigationSplitView {
@@ -278,6 +325,7 @@ struct CockpitView: View {
             if case .worker(let n) = c.selection { c.refreshWorker(n) }
         }
         .onReceive(attentionTick) { _ in c.refreshAttention() }
+        .onReceive(workTick) { _ in c.tickWork() }   // no-op unless a parent turn is in flight
     }
 }
 
@@ -390,8 +438,20 @@ struct ParentChat: View {
                         }
                         ForEach(c.messages) { m in Bubble(msg: m) }
                         if c.sending {
-                            HStack(spacing: 8) { ProgressView().scaleEffect(0.7); Text("parent is working\u{2026}").foregroundColor(.secondary) }
-                                .padding(.vertical, 4).id("spinner")
+                            VStack(alignment: .leading, spacing: 5) {
+                                HStack(spacing: 8) {
+                                    ProgressView().scaleEffect(0.7)
+                                    Text("\u{89aa} AI \u{304c}\u{64cd}\u{4f5c}\u{4e2d}\u{2026} \(c.elapsed)s").foregroundColor(.secondary)
+                                }
+                                // live: what the parent is actually doing this turn (from the audit log)
+                                ForEach(c.activity.suffix(5)) { a in
+                                    Text("\u{2192} \(a.action) \(a.target)")
+                                        .font(.system(.caption, design: .monospaced))
+                                        .foregroundColor(.secondary).lineLimit(1)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 4).id("spinner")
                         }
                         Color.clear.frame(height: 1).id("bottom")
                     }.padding()

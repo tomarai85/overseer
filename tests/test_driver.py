@@ -129,6 +129,20 @@ def run():
     driver._save_registry({"only": {}})
     res.append(("stale .tmp does not survive a save", driver._load_registry() == {"only": {}}))
 
+    # --- activity: merge + ts-sort the audit logs (the GUI's live 'what is the
+    #     parent doing' ticker). Must survive a malformed line and a missing log. ---
+    import contextlib
+    import io
+    from overseer import cli
+    driver.AUDIT.write_text('{"ts": 2, "action": "send", "target": "b"}\nnot json\n')
+    (_tmp / "relay-audit.log").write_text('{"ts": 1, "action": "relay", "target": "a"}\n')
+    _buf = io.StringIO()
+    with contextlib.redirect_stdout(_buf):
+        cli.cmd_activity(["10"])
+    _acts = _json.loads(_buf.getvalue())
+    res.append(("activity merges audit logs (skips malformed lines)", len(_acts) == 2))
+    res.append(("activity sorts by ts ascending", [a["action"] for a in _acts] == ["relay", "send"]))
+
     return res
 
 

@@ -154,6 +154,30 @@ def cmd_leads(store: Store) -> int:
     return 0
 
 
+def cmd_activity(args: list[str]) -> int:
+    """`overseer activity [n]` — the fleet's recent OPERATE actions (the parent's
+    spawn/send/kill + relay + autopilot), newest last, as JSON. This is what the
+    parent is actually *doing*: the GUI shows it live during a parent turn so the
+    chat isn't an opaque spinner ('what is it doing right now?')."""
+    from . import driver
+    n = int(args[0]) if (args and args[0].isdigit()) else 20
+    logs = [driver.AUDIT, driver.DATA / "relay-audit.log",
+            driver.DATA / "autopilot-audit.log"]
+    rows: list[dict] = []
+    for lg in logs:
+        try:
+            for line in lg.read_text(errors="ignore").splitlines()[-n:]:
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+        except OSError:
+            pass
+    rows.sort(key=lambda r: r.get("ts", 0))
+    print(json.dumps(rows[-n:]))
+    return 0
+
+
 def cmd_demo(argv: list[str]) -> int:
     """`overseer demo [port]` — serve a board seeded with every state (synthetic).
 
@@ -487,6 +511,9 @@ def main(argv: list[str] | None = None) -> int:
         if cmd == "alerts":
             store.close()
             return cmd_alerts(argv[1:])
+        if cmd == "activity":
+            store.close()
+            return cmd_activity(argv[1:])
         if cmd == "validate":
             store.close()
             return cmd_validate(argv[1:])
