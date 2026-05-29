@@ -88,6 +88,13 @@ def cmd_progress(_args: list[str]) -> int:
     return 0
 
 
+def cmd_alerts(_args: list[str]) -> int:
+    """`overseer alerts` — unified 'truly needs you' feed (stalled + spiraling + over-budget)."""
+    from . import alerts
+    print(json.dumps(alerts.attention()))
+    return 0
+
+
 def cmd_budget(args: list[str]) -> int:
     """`overseer budget [set <key> <tokens>]` — per-session token budgets + breach status."""
     from . import budget
@@ -450,6 +457,9 @@ def main(argv: list[str] | None = None) -> int:
         if cmd == "budget":
             store.close()
             return cmd_budget(argv[1:])
+        if cmd == "alerts":
+            store.close()
+            return cmd_alerts(argv[1:])
         if cmd == "autopilot":
             store.close()
             return cmd_autopilot(argv[1:])
