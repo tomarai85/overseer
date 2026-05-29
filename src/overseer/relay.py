@@ -47,6 +47,8 @@ READY_PROMPT = "❯"
 _WORKING_MARKERS = ("esc to interrupt", "✻", "Cogitating")
 _PERMISSION_MARKERS = ("Do you want to proceed", "Do you want to make this edit",
                        "❯ 1.", "1. Yes", "Allow this", "approve?")
+_STATUS_LINES = 15      # only the live bottom region carries current status (not scrollback)
+_CONFIRM_GAP = 0.6      # 2nd-sample delay to reject the inter-step false-'waiting' gap
 
 # TUI chrome to strip when extracting a worker's actual output for relay. Kept
 # self-contained so relay depends only on `driver` (not a sibling module's private
@@ -73,13 +75,18 @@ def _clean_pane(text: str) -> str:
 
 def pane_state(name: str) -> str:
     """Quiescence from the child's pane: waiting | working | needs-human | unknown.
-    `waiting` == quiescent == safe to type into (turn done, no work/permission)."""
+    `waiting` == quiescent == safe to type into (turn done, no work/permission).
+
+    Only the live BOTTOM region carries the current status (spinner / input prompt /
+    permission box). Scanning the full scrollback (review MED) would misread a worker
+    that merely *mentions* a marker string somewhere in its output."""
     raw = driver.read(name, lines=50)
-    if any(m in raw for m in _PERMISSION_MARKERS):
+    region = "\n".join(raw.splitlines()[-_STATUS_LINES:])
+    if any(m in region for m in _PERMISSION_MARKERS):
         return "needs-human"
-    if any(m in raw for m in _WORKING_MARKERS):
+    if any(m in region for m in _WORKING_MARKERS):
         return "working"
-    if READY_PROMPT in raw:
+    if READY_PROMPT in region:
         return "waiting"
     return "unknown"
 
@@ -102,9 +109,20 @@ def _require_owned(name: str, role: str) -> None:
 
 
 def _check_quiescent(name: str, force: bool) -> str:
-    """Return the target's current pane state; raise unless quiescent (or forced)."""
+    """Return the target's current pane state; raise unless quiescent (or forced).
+
+    When unforced and the first read says 'waiting', confirm with a second read a beat
+    later: a working child briefly shows no spinner between tool steps (review MED), so
+    a single 'waiting' can be a false gap. Require two consecutive 'waiting' reads."""
     st = pane_state(name)
-    if st in SAFE_TARGET or force:
+    if force:
+        return st
+    if st == "waiting" and _CONFIRM_GAP > 0:
+        time.sleep(_CONFIRM_GAP)
+        st2 = pane_state(name)
+        if st2 != "waiting":
+            st = st2                       # transient inter-step gap — surface real state
+    if st in SAFE_TARGET:
         return st
     raise RelayError(
         f"target '{name}' is '{st}', not quiescent — refusing to interrupt "

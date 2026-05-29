@@ -81,6 +81,13 @@ def cmd_usage(_args: list[str]) -> int:
     return 0
 
 
+def cmd_progress(_args: list[str]) -> int:
+    """`overseer progress` — liveness/progress truth (stalled/spiraling) via token-delta. THE moat."""
+    from . import progress
+    print(json.dumps(progress.fleet_progress()))
+    return 0
+
+
 def cmd_leads(store: Store) -> int:
     """`overseer leads` — scan once + emit live leads as JSON (for the GUI shell)."""
     try:
@@ -423,6 +430,9 @@ def main(argv: list[str] | None = None) -> int:
         if cmd == "usage":
             store.close()
             return cmd_usage(argv[1:])
+        if cmd == "progress":
+            store.close()
+            return cmd_progress(argv[1:])
         if cmd == "autopilot":
             store.close()
             return cmd_autopilot(argv[1:])

@@ -51,6 +51,7 @@ def fake_send(name, text, settle=0.4):
 driver.is_owned = fake_is_owned
 driver.read = fake_read
 driver.send = fake_send
+relay._CONFIRM_GAP = 0   # no real sleep in tests; double-sample reads the same mocked pane
 
 
 def reset():
@@ -86,6 +87,13 @@ check("_clean_pane keeps real output", "the real answer is 42" in _cleaned)
 check("_clean_pane strips banner/status chrome",
       "Welcome back" not in _cleaned and "bypass permissions" not in _cleaned
       and "Claude Code v" not in _cleaned)
+
+# 0c. region scan: a working-marker that appears only in SCROLLBACK (as data) must
+#     not read as 'working' when the live bottom is an idle prompt (review MED).
+reset(); _owned.add("w")
+_pane["w"] = "\n".join(["the docs note 'esc to interrupt' cancels a run"]
+                       + ["scroll filler line"] * 16 + ["❯ "])
+check("pane_state ignores marker in scrollback (region-scan)", relay.pane_state("w") == "waiting")
 
 # 1. tell refuses a non-owned target
 reset()
