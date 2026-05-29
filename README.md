@@ -69,20 +69,37 @@ the boundary lives in the CLI, not in a model instruction.
 ## Commands
 
 ```
+# monitor
 overseer status         one-shot board (terminal)
 overseer serve [port]   live web board (default :8899)
-overseer daemon [secs]  headless poll loop (+ OVERSEER_NOTIFY=1 for alerts)
 overseer leads          live sessions as JSON (used by the GUI)
 overseer supervise      away-mode summary over owned children (JSON)
+overseer doctor         environment self-check
+overseer demo [port]    web board seeded with every state (synthetic)
+
+# the moat / wedge (work on ALL sessions, incl. your own)
+overseer progress       liveness TRUTH: progressing / stalled (silent hang) / spiraling, via token-delta
+overseer usage          token usage per session + fleet total (spot the heavy worker)
+overseer budget [set <k> <n> | fleet | enforce [--go]]   per-session + fleet-wide token caps + auto-pause
+overseer validate [name | set <name> <cmd>]   run a child's tests -> pass/fail (the validation gate)
+overseer alerts         unified "truly needs you" feed (stalled + spiraling + over-budget)
+overseer guard [secs]   always-on watcher: notify the moment a session needs you (24/7 via launchd)
+
+# drive owned children (ov- only; never your own sessions)
 overseer spawn <name> [cwd]    start a child worker (waits until ready)
-overseer send  <name> <text>   instruct a child (owned only)
+overseer send  <name> <text>   instruct a child
+overseer tell  <name> <text>   like send, but only if the child is idle (won't interrupt)
+overseer route "<instruction>" --go   auto-pick the right owned worker (refuses if ambiguous)
+overseer relay <src> <dst>     pipe one child's output into another
+overseer autopilot <name> "<continue>" --max N   nudge an idle child to continue; stops when it needs you
 overseer read  <name> [lines]  read a child's screen
 overseer children              list owned children (JSON)
 overseer kill  <name>          stop a child
-overseer parent-send <text>    one turn with the fleet parent (JSON)
 overseer restart [prefix]      dry-run restart planner
-overseer doctor                environment self-check
-overseer demo [port]           web board seeded with every state (synthetic)
+
+# the parent (talk to it; it operates children — sandboxed to overseer-only via the guard hook)
+overseer parent-send <text>    one headless turn with the fleet parent (JSON)
+overseer parent-history | parent-reset
 ```
 
 Env: `OVERSEER_NOTIFY=1` (alert on entry to needs-you/crashed/blocked),

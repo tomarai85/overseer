@@ -58,7 +58,8 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
   /* moat overlay: alerts strip + per-row insight */
   #alerts{margin-bottom:10px}
   .alert-chip{display:flex;gap:10px;align-items:baseline;padding:9px 13px;margin-bottom:6px;
-    border-radius:9px;background:#1c1410;border-left:3px solid #ffb020}
+    border-radius:9px;background:#1c1410;border-left:3px solid #ffb020;cursor:pointer}
+  .alert-chip:hover{filter:brightness(1.2)}
   .alert-chip.stalled{border-color:#ff5c5c;background:#1c1012}
   .alert-chip.spiraling{border-color:#ffb020}
   .alert-chip.over-budget{border-color:#c98bff;background:#16121c}
@@ -174,7 +175,7 @@ function insBits(x){
 function renderAlerts(alerts){
   const el=document.getElementById('alerts');
   if(!alerts||!alerts.length){el.innerHTML='';return;}
-  el.innerHTML=alerts.map(a=>`<div class="alert-chip ${esc(a.kind)}">
+  el.innerHTML=alerts.map(a=>`<div class="alert-chip ${esc(a.kind)}" data-sid="${esc(a.session_id)}">
     <span class="k">${esc((a.kind||'').toUpperCase().replace('-',' '))}</span>
     <span class="n">${esc(a.name)}</span><span class="w">${esc(a.why||'')}</span></div>`).join('');
 }
@@ -276,6 +277,10 @@ function openDrawer(l){
 $('board').addEventListener('click',e=>{
   const row=e.target.closest('.row');if(!row)return;
   const l=LAST[row.dataset.sid];if(l)openDrawer(l);
+});
+$('alerts').addEventListener('click',e=>{           // an alert is a problem you can click to investigate
+  const chip=e.target.closest('.alert-chip');if(!chip)return;
+  const l=LAST[chip.dataset.sid];if(l)openDrawer(l);
 });
 $('dwclose').onclick=closeDrawer;$('backdrop').onclick=closeDrawer;
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer();});

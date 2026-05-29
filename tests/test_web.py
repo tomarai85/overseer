@@ -246,6 +246,8 @@ check("XSS: esc() helper present and applied to name/last_event/alert fields",
       "const esc=" in page and "esc(l.last_event" in page and "esc(a.name)" in page
       and "esc(l.name||l.domain" in page)
 check("drawer renders transcript turns ESCAPED (esc(x.text))", "esc(x.text)" in page)
+check("alert chips are clickable -> open the drawer for that session",
+      'data-sid="${esc(a.session_id)}"' in page and "$('alerts').addEventListener" in page)
 
 # ---- detail drawer: /api/conversation ----
 conversation.recent_exchange = lambda sid, turns=8: (
