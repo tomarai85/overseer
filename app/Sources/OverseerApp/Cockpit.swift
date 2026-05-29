@@ -54,8 +54,39 @@ final class Cockpit: ObservableObject {
     @Published var input: String = ""
     @Published var sending = false
     @Published var workerScreen = ""
+    @Published var notify = true
+
+    private var prevState: [String: String] = [:]
+    private var lastNotified: [String: Double] = [:]
 
     nonisolated static let bin = NSHomeDirectory() + "/overseer/bin/overseer"
+
+    /// Fire a native macOS notification via osascript — works for a non-bundled
+    /// binary (UNUserNotificationCenter needs a bundle id; osascript doesn't).
+    nonisolated static func postNotification(_ title: String, _ body: String) {
+        let safe = body.replacingOccurrences(of: "\"", with: "'")
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        p.arguments = ["-e", "display notification \"\(safe)\" with title \"\(title)\""]
+        try? p.run()
+    }
+
+    /// Alert only on ENTRY into needs-you/crashed, debounced 120s per session,
+    /// so a session sitting in needs-you doesn't nag and a busy fleet isn't spam.
+    func detectAndNotify(_ fresh: [Lead]) {
+        let alert: Set<String> = ["needs-human", "crashed"]
+        let now = Date().timeIntervalSince1970
+        if notify {
+            for l in fresh where alert.contains(l.state) && prevState[l.session_id] != l.state {
+                if now - (lastNotified[l.session_id] ?? 0) > 120 {
+                    let what = l.state == "crashed" ? "crashed" : "needs you"
+                    Self.postNotification("Overseer", "\(l.name) — \(what)")
+                    lastNotified[l.session_id] = now
+                }
+            }
+        }
+        prevState = Dictionary(fresh.map { ($0.session_id, $0.state) }, uniquingKeysWith: { a, _ in a })
+    }
 
     nonisolated static func run(_ args: [String]) -> Data {
         let p = Process()
@@ -72,7 +103,11 @@ final class Cockpit: ObservableObject {
             let childData = Self.run(["children"])
             let leads = (try? JSONDecoder().decode([Lead].self, from: leadsData)) ?? []
             let workers = (try? JSONDecoder().decode([String].self, from: childData)) ?? []
-            await MainActor.run { self.leads = leads; self.workers = workers }
+            await MainActor.run {
+                self.detectAndNotify(leads)
+                self.leads = leads
+                self.workers = workers
+            }
         }
     }
 
@@ -186,10 +221,17 @@ struct Sidebar: View {
         }
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom) {
-            Text(c.counts.isEmpty ? "—" : c.counts)
-                .font(.caption.monospaced()).foregroundColor(.secondary)
-                .frame(maxWidth: .infinity).padding(6)
-                .background(.thinMaterial)
+            HStack {
+                Text(c.counts.isEmpty ? "—" : c.counts)
+                    .font(.caption.monospaced()).foregroundColor(.secondary)
+                Spacer()
+                Toggle(isOn: $c.notify) {
+                    Image(systemName: c.notify ? "bell.fill" : "bell.slash")
+                }
+                .toggleStyle(.button).font(.caption)
+                .help("Notify on needs-you / crashed")
+            }
+            .padding(6).background(.thinMaterial)
         }
     }
 
