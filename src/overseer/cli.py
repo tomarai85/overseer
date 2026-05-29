@@ -318,6 +318,41 @@ def cmd_route(args: list[str]) -> int:
     return 0 if (plan.get("routed") or not go) else 1
 
 
+def cmd_autopilot(args: list[str]) -> int:
+    """`overseer autopilot <child> <prompt...> [--every N] [--max K] [--ignore-needs-human]`
+    — keep nudging an owned worker with a continuation prompt each time it goes
+    quiescent (bounded by --max; stops on needs-human unless --ignore-needs-human)."""
+    from . import autopilot
+    every, max_nudges = 120.0, 10
+    ignore = "--ignore-needs-human" in args
+    args = [a for a in args if a != "--ignore-needs-human"]
+    rest, i = [], 0
+    while i < len(args):
+        if args[i] == "--every" and i + 1 < len(args):
+            every = float(args[i + 1]); i += 2; continue
+        if args[i] == "--max" and i + 1 < len(args):
+            max_nudges = int(args[i + 1]); i += 2; continue
+        rest.append(args[i]); i += 1
+    if len(rest) < 2:
+        print("usage: overseer autopilot <child> <prompt...> [--every N] [--max K] "
+              "[--ignore-needs-human]", file=sys.stderr)
+        return 2
+    child, prompt = rest[0], " ".join(rest[1:])
+
+    def on_event(action, ch, st, n=None):
+        print(f"[{time.strftime('%H:%M:%S')}] autopilot {ch}: {action} (state={st}, nudges={n})",
+              file=sys.stderr)
+
+    try:
+        res = autopilot.run(child, prompt, every=every, max_nudges=max_nudges,
+                            ignore_needs_human=ignore, on_event=on_event)
+    except autopilot.AutopilotError as e:
+        print(f"autopilot error: {e}", file=sys.stderr)
+        return 1
+    print(json.dumps(res))
+    return 0
+
+
 def cmd_parent(args: list[str]) -> int:
     """`overseer parent-send <msg> | parent-history | parent-reset` — drive the
     fleet parent headlessly (used by the GUI; also usable from the shell)."""
@@ -374,6 +409,9 @@ def main(argv: list[str] | None = None) -> int:
         if cmd == "supervise":
             store.close()
             return cmd_supervise(argv[1:])
+        if cmd == "autopilot":
+            store.close()
+            return cmd_autopilot(argv[1:])
         if cmd == "daemon":
             interval = float(argv[1]) if len(argv) > 1 else 5.0
             return cmd_daemon(store, interval)
