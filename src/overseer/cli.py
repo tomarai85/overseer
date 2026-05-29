@@ -74,6 +74,13 @@ def cmd_supervise(_args: list[str]) -> int:
     return 0
 
 
+def cmd_usage(_args: list[str]) -> int:
+    """`overseer usage` — token usage per session + fleet total (spot heavy/runaway workers)."""
+    from . import usage
+    print(json.dumps(usage.fleet_usage()))
+    return 0
+
+
 def cmd_leads(store: Store) -> int:
     """`overseer leads` — scan once + emit live leads as JSON (for the GUI shell)."""
     try:
@@ -413,6 +420,9 @@ def main(argv: list[str] | None = None) -> int:
         if cmd == "supervise":
             store.close()
             return cmd_supervise(argv[1:])
+        if cmd == "usage":
+            store.close()
+            return cmd_usage(argv[1:])
         if cmd == "autopilot":
             store.close()
             return cmd_autopilot(argv[1:])
