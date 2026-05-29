@@ -93,3 +93,36 @@ Then P1 (cross-tool adapters) as the expansion moat.
 Sources: see the two research transcripts; key — Agent View / costs / security docs at
 code.claude.com, claude-code GitHub issues (#37521/#28482/#49150/#23250/#36885/#11665/
 #26171/#30447), CloudZero cost writeups, Addy Osmani "agents need a manager", omnara pricing.
+
+## Feature roadmap v2 (research round 2, mid-2026)
+
+Competitive update: Conductor (free/BYO), Cursor 3.0 "Agents Window", Claude /goal
++ supervisor, AgentsRoom (mobile), Nimbalyst. Monitoring/notifications/worktree-spin
+are now contested → defensible value moved to the AFTER-run (review/validate/integrate)
+and DELEGATE-in / unattended layers.
+
+Ranked NEW features (beyond what we have):
+1. [SHIPPED] Validation gate — auto-run a child's tests/lint/build, label pass/fail
+   so the needs-you queue is pre-validated ("only look at work that passed"). The #1
+   stated pain ("validation is the bottleneck"). `overseer validate`.
+2. Integration / merge-queue + worktree GC — serialized rebase-on-main → re-validate →
+   merge/flag; prune orphaned worktrees. The merge tax that makes parallelism net-neg
+   past ~3 agents. Effort M-L.
+3. Ticket-in delegation — Linear/GitHub issue tagged → spawn sandboxed worker in a
+   worktree with the issue as spec → PR back. (Cursor proved it; open Anthropic
+   FR #12925.) Turns the cockpit from dashboard into a delegation surface. Effort M.
+4. Fleet-wide HARD spend cap + auto-kill — aggregate ledger across all sessions, daily/
+   monthly burn-down vs the (post-June-15 split) credit pools, auto-pause worst offender.
+   Cheapest "paid for itself" story ($8k–$47k runaway cases). Effort S-M. Extends budget.py.
+5. Cross-model routing — Opus builds, cheaper model/Codex reviews; per-session model tag. M.
+6. Unattended overnight queue + auto-resume after rate-limit reset (4 open GH issues). M.
+7. (low) Batch/remote permission approval — mostly covered by needs-you + sandbox. S.
+
+WTP (anecdotal, directional): "$200/mo without thinking" pro buyers exist; individuals
+resist before a project proves out (→ free entry tier). Comparable: Intent $20→$200/mo;
+Conductor free. Suggested tiers: Free monitoring · $20–40/mo Pro (validation gate +
+merge queue + fleet cost-cap) · $100–200/mo (ticket-in delegation + multi-model + unattended).
+Pricing landmine: June 15 2026 interactive/programmatic credit-pool split — price the
+unattended tier carefully.
+
+Build order (next): #4 fleet hard-cap (quick, extends budget) → #2 merge-queue/GC → #3 ticket-in.
