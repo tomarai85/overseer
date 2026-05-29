@@ -63,7 +63,9 @@ tests missed):
    fragmenting at the first newline;
 4. an idle child reads `waiting` (not `working`) in BOTH `relay.pane_state` and the
    dashboard's `supervisor.child_state`, including a fresh spawn whose welcome box
-   pushes the `❯` above the status footer.
+   pushes the `❯` above the status footer;
+5. `autopilot` re-nudges an idle worker each time it goes quiescent and stops at the
+   cap (live: two nudges, then `stopped: max_nudges`).
 
 Hardened against an Opus adversarial review (ownership boundary sound; fixed: the
 multi-line submit bug, marker-as-data via region-scanned working/permission markers,
