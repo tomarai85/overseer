@@ -1,109 +1,52 @@
-// Overseer — menu-bar shell (native AppKit).
+// Overseer — the OPERATE cockpit (native macOS window).
 //
-// The "eyes" of the cockpit as a real Mac app: a status-bar item showing live
-// fleet counts at a glance, with a dropdown listing each session + state.
-// State comes from the proven Python engine via `overseer leads` (JSON), so the
-// hard logic (state-truth) is shared, not reimplemented.
+// You talk to one Fleet Parent (left: "Parent"); it spawns and drives child
+// workers for you. The sidebar lists your workers + the whole fleet's true
+// state; the main pane is the parent chat, or a selected worker's live screen.
+// All logic is the proven Python core, called via `~/overseer/bin/overseer`.
 //
-// This is the minimal first slice. The send box + expandable window + the
-// parent-AI cockpit come next; this proves "real Mac app, not a browser tab".
+// AppKit bootstrap (not bundled .app yet) so the window reliably shows + a
+// menu-bar item stays for at-a-glance. SwiftUI content lives in Cockpit.swift.
 
 import AppKit
+import SwiftUI
 
-struct Lead: Decodable {
-    let session_id: String
-    let name: String
-    let state: String
-    let age: String
-}
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    var window: NSWindow!
+    var statusItem: NSStatusItem!
 
-final class FleetController: NSObject {
-    let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    var timer: Timer?
+    func applicationDidFinishLaunching(_ note: Notification) {
+        let hosting = NSHostingController(rootView: CockpitView())
+        window = NSWindow(contentViewController: hosting)
+        window.title = "Overseer — Fleet Cockpit"
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        window.setContentSize(NSSize(width: 960, height: 640))
+        window.center()
+        window.makeKeyAndOrderFront(nil)
 
-    func start() {
-        statusItem.button?.title = "OV …"
-        refreshNow()
-        let t = Timer.scheduledTimer(timeInterval: 5, target: self,
-                                     selector: #selector(refreshNow), userInfo: nil, repeats: true)
-        RunLoop.main.add(t, forMode: .common)
-        timer = t
-    }
-
-    func glyph(_ state: String) -> String {
-        switch state {
-        case "needs-human": return "⚠"
-        case "crashed":     return "✗"
-        case "blocked":     return "◐"
-        case "waiting":     return "⏸"
-        case "working":     return "▶"
-        case "done":        return "✓"
-        default:            return "•"
-        }
-    }
-
-    @objc func refreshNow() {
-        DispatchQueue.global().async {
-            let leads = Self.fetchLeads()
-            DispatchQueue.main.async { self.render(leads) }
-        }
-    }
-
-    func render(_ leads: [Lead]) {
-        var counts: [String: Int] = [:]
-        for l in leads { counts[l.state, default: 0] += 1 }
-        let working = counts["working"] ?? 0
-        let waiting = counts["waiting"] ?? 0
-        let needs   = counts["needs-human"] ?? 0
-        let crashed = counts["crashed"] ?? 0
-
-        // glanceable menu-bar title: working count, then anything that wants Tom
-        var title = "▶\(working)"
-        if waiting > 0 { title += " ⏸\(waiting)" }
-        if needs   > 0 { title += " ⚠\(needs)" }
-        if crashed > 0 { title += " ✗\(crashed)" }
-        statusItem.button?.title = title
-
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.button?.title = "OV"
         let menu = NSMenu()
-        let header = NSMenuItem(title: "Overseer — \(leads.count) live", action: nil, keyEquivalent: "")
-        header.isEnabled = false
-        menu.addItem(header)
+        let open = NSMenuItem(title: "Open Cockpit", action: #selector(showWindow), keyEquivalent: "o")
+        open.target = self
+        menu.addItem(open)
         menu.addItem(.separator())
-        if leads.isEmpty {
-            menu.addItem(NSMenuItem(title: "no live sessions", action: nil, keyEquivalent: ""))
-        } else {
-            for l in leads {
-                menu.addItem(NSMenuItem(title: "\(glyph(l.state))  \(l.name)    \(l.age)",
-                                        action: nil, keyEquivalent: ""))
-            }
-        }
-        menu.addItem(.separator())
-        let r = NSMenuItem(title: "Refresh now", action: #selector(refreshNow), keyEquivalent: "r")
-        r.target = self
-        menu.addItem(r)
-        let q = NSMenuItem(title: "Quit Overseer", action: #selector(quit), keyEquivalent: "q")
-        q.target = self
-        menu.addItem(q)
+        menu.addItem(NSMenuItem(title: "Quit Overseer", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem.menu = menu
+
+        NSApp.activate(ignoringOtherApps: true)
     }
 
-    @objc func quit() { NSApp.terminate(nil) }
-
-    static func fetchLeads() -> [Lead] {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        p.arguments = ["-lc", "\(NSHomeDirectory())/overseer/bin/overseer leads"]
-        let outPipe = Pipe()
-        p.standardOutput = outPipe
-        p.standardError = Pipe()
-        do { try p.run(); p.waitUntilExit() } catch { return [] }
-        let data = outPipe.fileHandleForReading.readDataToEndOfFile()
-        return (try? JSONDecoder().decode([Lead].self, from: data)) ?? []
+    @objc func showWindow() {
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { false }
 }
 
 let app = NSApplication.shared
-app.setActivationPolicy(.accessory)  // menu-bar only, no dock icon
-let controller = FleetController()
-controller.start()
+app.setActivationPolicy(.regular)
+let delegate = AppDelegate()
+app.delegate = delegate
 app.run()

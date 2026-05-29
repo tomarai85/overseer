@@ -240,13 +240,9 @@ def cmd_read(args: list[str]) -> int:
 
 
 def cmd_children(_args: list[str]) -> int:
-    """`overseer children` — list driver-managed children."""
+    """`overseer children` — list driver-managed children as JSON (for the GUI/parent)."""
     from . import driver
-    kids = driver.list_children()
-    if not kids:
-        print("no driver-managed children (spawn one: overseer spawn <name> [cwd])")
-        return 0
-    print(f"{len(kids)} managed child(ren): " + ", ".join(kids))
+    print(json.dumps(driver.list_children()))
     return 0
 
 
