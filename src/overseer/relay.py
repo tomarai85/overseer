@@ -86,8 +86,12 @@ def pane_state(name: str) -> str:
         return "needs-human"
     if any(m in region for m in _WORKING_MARKERS):
         return "working"
-    if READY_PROMPT in region:
-        return "waiting"
+    if READY_PROMPT in raw:
+        return "waiting"                # idle chevron present ANYWHERE in the pane — robust to the
+                                        # fresh-spawn layout where the welcome box pushes ❯ well above
+                                        # the status footer + trailing blank rows (so a last-N-lines
+                                        # scan misses it). working/permission are matched first (in the
+                                        # live region), so this only fires when the child is truly idle.
     return "unknown"
 
 

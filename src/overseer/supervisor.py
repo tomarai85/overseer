@@ -91,15 +91,16 @@ def child_state(name: str, now: float | None = None, hb: dict | None = None) -> 
         state = "needs-human"
     elif any(m in raw for m in _WORKING_MARKERS):
         state = "working"
-    elif READY_PROMPT in "\n".join(raw.splitlines()[-15:]):
-        state = "waiting"                               # idle input chevron visible in the live bottom
-                                                        # region. Checked BEFORE the age heuristic (the
-                                                        # idle TUI animates -> hash never stales -> age<8
-                                                        # would mislabel idle as 'working' forever). And
-                                                        # scanned over the last LINES, not endswith/last-
-                                                        # 200-chars: the status footer (⏵⏵ bypass perms,
-                                                        # weekly usage) renders BELOW the ❯ prompt, so the
-                                                        # chevron is never the literal last characters.
+    elif READY_PROMPT in raw:
+        state = "waiting"                               # idle chevron present ANYWHERE in the pane.
+                                                        # Checked BEFORE the age heuristic (the idle TUI
+                                                        # animates -> content hash never stales -> age<8
+                                                        # would mislabel idle as 'working' forever). Scan
+                                                        # the WHOLE pane, not endswith / a last-N-lines
+                                                        # window: on a fresh spawn the welcome box pushes
+                                                        # ❯ far above the status footer + trailing blank
+                                                        # rows, so a bottom-window scan misses it (live-
+                                                        # confirmed). working/permission are matched above.
     elif age < 8:
         state = "working"                               # pane changed recently, no idle prompt yet
     elif age >= STUCK_SEC:
