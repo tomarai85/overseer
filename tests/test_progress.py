@@ -49,6 +49,24 @@ def run():
     # no token data -> unknown (never a false stall)
     r = progress.classify("s4", "busy", now=NOW, snaps={}, tokens=None)
     res.append(("no usage data -> unknown", r["verdict"] == "unknown"))
+
+    # multi-poller: the burn rate is computed over a trailing window, not consumed on
+    # read. A second poller landing on a flat moment (1s after the increase was 'seen')
+    # must STILL report the runaway — the old consume-on-read reported rate 0 for
+    # whoever wasn't first past each increase, diluting/missing the spiral.
+    snapsM = {}
+    progress.classify("m", "busy", now=NOW, snaps=snapsM, tokens=0)
+    progress.classify("m", "busy", now=NOW + 30, snaps=snapsM, tokens=45_000)   # +45k/30s
+    r = progress.classify("m", "busy", now=NOW + 31, snaps=snapsM, tokens=45_000)  # flat poll
+    res.append(("windowed rate survives an intervening flat poll (multi-poller)",
+                r["rate_per_min"] >= progress.SPIRAL_TOKENS_PER_MIN))
+    res.append(("  -> still flagged spiraling on the flat poll", r["verdict"] == "spiraling"))
+
+    # old snapshot schema (no 'samples') still classifies + upgrades in place
+    snapsOld = {"o": {"tokens": 10, "since": NOW - 5, "seen": NOW - 5}}
+    r = progress.classify("o", "busy", now=NOW, snaps=snapsOld, tokens=10)
+    res.append(("legacy snapshot schema upgrades without error", r["verdict"] in ("progressing", "idle", "stalled")))
+    res.append(("  -> legacy entry gains a samples ring", isinstance(snapsOld["o"].get("samples"), list)))
     return res
 
 
