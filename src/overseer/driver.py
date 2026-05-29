@@ -156,10 +156,14 @@ def wait_ready(name: str, timeout: float = 30.0, poll: float = 0.5) -> bool:
 
 
 def send(name: str, text: str, settle: float = 0.4) -> None:
-    """Type a prompt into the child and submit it.
+    """Type a prompt into the child and submit it as ONE message.
 
-    Text is sent literally; Enter is a separate keystroke after `settle` so the
-    TUI registers the full line before submission.
+    Single-line text goes via `send-keys -l` then a separate Enter. MULTI-LINE text
+    must NOT go through `send-keys -l`: a literal embedded `\\n` is read by the TUI as
+    Enter (submit), which fragments the message into several auto-submitted prompts.
+    Instead we use tmux BRACKETED PASTE (load-buffer + paste-buffer -p), which the
+    claude TUI honors — the whole block is inserted as one multi-line input (verified
+    live 2026-05-29) — then a single Enter submits it once.
     """
     if not is_owned(name):
         _audit("send-REFUSED", _plain(name), "not an owned child")
@@ -169,7 +173,13 @@ def send(name: str, text: str, settle: float = 0.4) -> None:
         raise DriverError(f"no child '{name}'")
     if not text:
         raise DriverError("refusing to send empty text")
-    _tmux("send-keys", "-t", sn, "-l", text)
+    if "\n" in text:
+        buf = f"overseer-{_plain(name)}"            # per-child buffer: no cross-send race
+        subprocess.run(["tmux", "load-buffer", "-b", buf, "-"],
+                       input=text, text=True, capture_output=True)
+        _tmux("paste-buffer", "-t", sn, "-b", buf, "-p", "-d")   # -p = bracketed, -d = drop buffer
+    else:
+        _tmux("send-keys", "-t", sn, "-l", text)
     time.sleep(settle)
     _tmux("send-keys", "-t", sn, "Enter")
     _audit("send", _plain(name), text)
