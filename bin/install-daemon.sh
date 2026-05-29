@@ -1,26 +1,34 @@
 #!/usr/bin/env bash
 # install-daemon.sh — opt in to always-on 24/7 Overseer notifications.
-# Copies the notify-daemon LaunchAgent into place and loads it, so you get a
-# native alert the moment any session needs you / crashes — even with the app
-# (and your terminals) closed. Reversible: ./bin/install-daemon.sh --uninstall
+# Installs two LaunchAgents so you get a native alert the moment a session needs
+# you — even with the app and every terminal closed:
+#   com.overseer.daemon  state transitions (needs-you / crashed / blocked)
+#   com.overseer.guard   the moat: stalled (silent hang) / spiraling / over-budget
+# Reversible: ./bin/install-daemon.sh --uninstall
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
-LABEL="com.overseer.daemon"
-PLIST="$HERE/deploy/$LABEL.plist"
-DEST="$HOME/Library/LaunchAgents/$LABEL.plist"
+LABELS=("com.overseer.daemon" "com.overseer.guard")
+
+for LABEL in "${LABELS[@]}"; do
+    DEST="$HOME/Library/LaunchAgents/$LABEL.plist"
+    if [ "${1:-}" = "--uninstall" ]; then
+        launchctl unload "$DEST" 2>/dev/null || true
+        rm -f "$DEST"
+        echo "uninstalled $LABEL"
+        continue
+    fi
+    mkdir -p "$HOME/Library/LaunchAgents"
+    cp "$HERE/deploy/$LABEL.plist" "$DEST"
+    launchctl unload "$DEST" 2>/dev/null || true   # idempotent reload
+    launchctl load "$DEST"
+    echo "loaded $LABEL"
+done
 
 if [ "${1:-}" = "--uninstall" ]; then
-    launchctl unload "$DEST" 2>/dev/null || true
-    rm -f "$DEST"
-    echo "uninstalled $LABEL (notifications stopped)"
-    exit 0
+    echo "all Overseer notification agents stopped."
+else
+    echo "24/7 notifications on: state transitions + stalled/spiraling/over-budget."
+    echo "  stop:  ./bin/install-daemon.sh --uninstall"
+    echo "  logs:  tail -f '$HERE/data/'{daemon,guard}.log"
 fi
-
-mkdir -p "$HOME/Library/LaunchAgents"
-cp "$PLIST" "$DEST"
-launchctl unload "$DEST" 2>/dev/null || true   # idempotent reload
-launchctl load "$DEST"
-echo "loaded $LABEL — 24/7 needs-you / crashed / blocked notifications are now on."
-echo "  stop:  ./bin/install-daemon.sh --uninstall"
-echo "  log:   tail -f '$HERE/data/daemon.log'"

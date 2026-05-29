@@ -13,7 +13,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import notify, roster
+from . import driver, notify, relay, roster, route
 from .engine import scan_once
 from .store import Store
 
@@ -51,9 +51,64 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
   .dim{color:var(--mut)} .alert{box-shadow:0 0 0 1px #ff5c5c33}
   .empty{color:var(--mut);padding:40px;text-align:center}
   .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px}
+  /* operate panel */
+  .op{margin-top:22px;border-top:1px solid var(--line);padding-top:16px}
+  .op h2{font-size:12px;letter-spacing:2px;color:var(--mut);margin:0 0 4px;font-weight:600}
+  .op .note{color:var(--mut);font-size:11px;margin-bottom:12px}
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .card{border:1px solid var(--line);border-radius:10px;background:var(--card);padding:13px}
+  .card.full{grid-column:1/-1}
+  .card h3{font-size:12px;margin:0 0 9px;font-weight:600;letter-spacing:.5px}
+  .card label{display:block;color:var(--mut);font-size:11px;margin:7px 0 3px}
+  select,input[type=text],textarea{width:100%;background:#0d1017;color:var(--fg);
+    border:1px solid var(--line);border-radius:7px;padding:8px 9px;font:13px/1.4
+    ui-monospace,Menlo,monospace;resize:vertical}
+  textarea{min-height:46px}
+  .ctl{display:flex;align-items:center;gap:12px;margin-top:10px}
+  button{background:#1f6feb;color:#fff;border:0;border-radius:7px;padding:8px 16px;
+    font:600 13px ui-monospace,Menlo,monospace;cursor:pointer}
+  button:hover{background:#388bfd} button:disabled{opacity:.5;cursor:default}
+  .chk{color:var(--mut);font-size:11px;display:flex;align-items:center;gap:5px}
+  .out{margin-top:12px;min-height:20px;font-size:12px;white-space:pre-wrap;
+    border-radius:7px;padding:9px 11px;border:1px solid var(--line);background:#0d1017}
+  .out.ok{border-color:#3ddc8455;color:#9be9c0} .out.err{border-color:#ff5c5c55;color:#ffb3b3}
 </style></head><body>
 <header><h1>OVERSEER</h1><span class="sub" id="sub">connecting...</span></header>
-<div class="wrap" id="board"></div>
+<div class="wrap">
+<div id="board"></div>
+<div class="op">
+  <h2>OPERATE</h2>
+  <div class="note">owned workers only — Overseer never types into your own hand-started sessions.
+    A target must be idle (waiting) unless you force it.</div>
+  <div class="cards">
+    <div class="card">
+      <h3>Send a command</h3>
+      <label>target worker</label><select id="t_target"></select>
+      <label>command</label><textarea id="t_text" placeholder="e.g. run the test suite and fix the first failure"></textarea>
+      <label>context (optional — pasted below the command)</label><textarea id="t_ctx" placeholder="an error, a file's contents, prior output..."></textarea>
+      <div class="ctl"><button id="t_go">Send</button>
+        <span class="chk"><input type="checkbox" id="t_force">force (interrupt if busy)</span></div>
+    </div>
+    <div class="card">
+      <h3>Route — let Overseer pick the worker</h3>
+      <label>instruction</label><textarea id="r_text" placeholder="e.g. rerun the vault sync ingest"></textarea>
+      <div class="ctl"><button id="r_go">Route &amp; send</button>
+        <span class="chk"><input type="checkbox" id="r_force">force</span></div>
+      <div class="note" style="margin-top:9px">refuses if no single worker clearly matches (no mis-route).</div>
+    </div>
+    <div class="card full">
+      <h3>Relay — pipe one worker's latest output into another</h3>
+      <div class="ctl" style="margin-top:0">
+        <span style="flex:1"><label>from</label><select id="x_src"></select></span>
+        <span style="flex:1"><label>to</label><select id="x_dst"></select></span>
+        <span><label>&nbsp;</label><button id="x_go">Relay</button></span>
+        <span class="chk"><label>&nbsp;</label><span><input type="checkbox" id="x_force">force</span></span>
+      </div>
+    </div>
+  </div>
+  <div class="out" id="op_out">no action yet.</div>
+</div>
+</div>
 <script>
 const STATES=__STATES__;
 function age(ts){if(!ts)return'-';let d=Math.max(0,Date.now()/1000-ts);
@@ -82,6 +137,52 @@ async function tick(){
   }catch(e){document.getElementById('sub').textContent='daemon offline — '+e;}
 }
 tick();setInterval(tick,2000);
+
+// ---- operate panel ----
+const $=id=>document.getElementById(id);
+let CHILDREN=[];
+function fillSel(sel,keepEmpty){
+  const cur=sel.value;
+  sel.innerHTML=(keepEmpty?'<option value="">—</option>':'')+CHILDREN.map(c=>
+    `<option value="${c.name}">${c.name} · ${c.state}</option>`).join('');
+  if([...sel.options].some(o=>o.value===cur))sel.value=cur;
+}
+async function loadChildren(){
+  try{
+    const j=await(await fetch('/api/children')).json();
+    CHILDREN=j.children||[];
+    fillSel($('t_target'),false);fillSel($('x_src'),false);fillSel($('x_dst'),true);
+    if(!CHILDREN.length)showOut('no owned workers yet — `overseer spawn <name> <cwd>` to create one.',null);
+  }catch(e){/* dashboard may be mid-restart */}
+}
+function showOut(msg,ok){const o=$('op_out');o.textContent=msg;
+  o.className='out'+(ok===true?' ok':ok===false?' err':'');}
+async function post(path,payload,btn){
+  btn.disabled=true;showOut('sending...',null);
+  try{
+    const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload)});
+    const j=await r.json();
+    if(j.ok){
+      if(j.action==='route')showOut(`routed -> '${j.chosen}' (${j.delivery?.chars||0} chars sent)`,true);
+      else if(j.action==='relay')showOut(`relayed ${j.src} -> ${j.dst} (${j.chars} chars, target was ${j.target_state_before})`,true);
+      else showOut(`sent to '${j.target}' (${j.chars} chars, was ${j.state_before})`,true);
+    }else showOut(j.reason||j.error||'refused',false);
+  }catch(e){showOut('request failed — '+e,false);}
+  finally{btn.disabled=false;setTimeout(loadChildren,400);}
+}
+$('t_go').onclick=()=>{const t=$('t_target').value,x=$('t_text').value.trim();
+  if(!t)return showOut('pick a target worker.',false);
+  if(!x)return showOut('type a command.',false);
+  post('/api/tell',{name:t,text:x,context:$('t_ctx').value.trim()||null,force:$('t_force').checked},$('t_go'));};
+$('r_go').onclick=()=>{const x=$('r_text').value.trim();
+  if(!x)return showOut('type an instruction.',false);
+  post('/api/route',{instruction:x,force:$('r_force').checked},$('r_go'));};
+$('x_go').onclick=()=>{const s=$('x_src').value,d=$('x_dst').value;
+  if(!s||!d)return showOut('pick both a source and a target.',false);
+  if(s===d)return showOut('source and target must differ.',false);
+  post('/api/relay',{src:s,dst:d,force:$('x_force').checked},$('x_go'));};
+loadChildren();setInterval(loadChildren,4000);
 </script></body></html>"""
 
 
@@ -134,8 +235,71 @@ def make_handler(db_path):
                 finally:
                     s.close()
                 self._send(200, json.dumps({"leads": rows}), "application/json")
+            elif self.path.startswith("/api/children"):
+                # OWNED workers only (driver registry) + each one's quiescence,
+                # so the operate panel can offer real targets and show whether it
+                # is safe to type into them right now. Never lists Tom's own
+                # hand-started sessions — those are not Overseer-owned.
+                kids = []
+                for name in driver.list_children():
+                    try:
+                        st = relay.pane_state(name) if driver.exists(name) else "gone"
+                    except Exception:
+                        st = "unknown"
+                    kids.append({"name": driver._plain(name), "state": st})
+                self._send(200, json.dumps({"children": kids}), "application/json")
             else:
                 self._send(404, "not found", "text/plain")
+
+        # ---- operate layer: issue commands from the dashboard (Tom's pain #1/#3) ----
+        # Every action below is guarded in relay/route: OWNED children only, target
+        # must be quiescent unless force=true, and each is appended to the audit log.
+        # The server binds 127.0.0.1, so this surface is local-only.
+        def _read_json(self):
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                raw = self.rfile.read(n) if n > 0 else b""
+                return json.loads(raw.decode("utf-8")) if raw else {}
+            except (ValueError, json.JSONDecodeError):
+                return None
+
+        def do_POST(self):
+            actions = ("/api/tell", "/api/route", "/api/relay")
+            path = next((a for a in actions if self.path.startswith(a)), None)
+            if path is None:
+                self._send(404, json.dumps({"error": "no such action"}), "application/json")
+                return
+            body = self._read_json()
+            if body is None:
+                self._send(400, json.dumps({"error": "invalid JSON body"}), "application/json")
+                return
+            force = bool(body.get("force"))
+            try:
+                if path == "/api/tell":
+                    name = (body.get("name") or "").strip()
+                    text = (body.get("text") or "").strip()
+                    if not name or not text:
+                        raise ValueError("tell needs a target 'name' and non-empty 'text'")
+                    res = relay.tell(name, text, context=(body.get("context") or None), force=force)
+                    out = {"ok": True, "action": "tell", **res}
+                elif path == "/api/route":
+                    res = route.route(body.get("instruction") or "", go=True, force=force)
+                    out = {"ok": bool(res.get("routed")), "action": "route", **res}
+                else:  # /api/relay
+                    src = (body.get("src") or "").strip()
+                    dst = (body.get("dst") or "").strip()
+                    if not src or not dst:
+                        raise ValueError("relay needs 'src' and 'dst'")
+                    res = relay.relay(src, dst, force=force)
+                    out = {"ok": True, "action": "relay", **res}
+                self._send(200, json.dumps(out), "application/json")
+            except (relay.RelayError, ValueError) as e:
+                # Fail-closed refusals (not owned / not quiescent / bad input) are a
+                # 200 with ok:false so the UI shows WHY rather than a generic error.
+                self._send(200, json.dumps({"ok": False, "error": str(e)}), "application/json")
+            except Exception as e:  # never crash the dashboard on an action
+                self._send(500, json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"}),
+                           "application/json")
 
     return Handler
 

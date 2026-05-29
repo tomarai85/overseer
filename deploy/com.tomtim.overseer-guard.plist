@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Overseer GUARD — the moat made actionable, 24/7. Runs `overseer guard`, which
+  fires a native notification the moment a session truly needs you: stalled
+  (silent hang), spiraling (token runaway), over-budget, needs-human, or crashed
+  — debounced. Catches what Agent View can't, even with every terminal closed.
+
+  Install (opt-in): ./bin/install-daemon.sh   (installs this + the notify daemon)
+  Stop:             launchctl unload ~/Library/LaunchAgents/com.overseer.guard.plist
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.overseer.guard</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__OVERSEER_HOME__/bin/overseer</string>
+        <string>guard</string>
+        <string>10</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__OVERSEER_HOME__</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>OVERSEER_NOTIFY</key>
+        <string>1</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>__OVERSEER_HOME__/data/guard.log</string>
+    <key>StandardErrorPath</key>
+    <string>__OVERSEER_HOME__/data/guard.log</string>
+</dict>
+</plist>
