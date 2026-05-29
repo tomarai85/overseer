@@ -16,6 +16,7 @@ Design rules:
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
@@ -36,6 +37,7 @@ TRUST_MARKERS = ("Do you trust the files", "trust the files in this folder")
 DATA = Path(os.environ.get("OVERSEER_DATA", str(Path(__file__).resolve().parents[2] / "data")))
 REGISTRY = DATA / "children.json"
 AUDIT = DATA / "driver-audit.log"
+_REG_LOCK = DATA / "children.json.lock"
 
 
 class DriverError(RuntimeError):
@@ -64,6 +66,25 @@ def _save_registry(reg: dict) -> None:
     tmp = REGISTRY.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(reg, indent=2))
     tmp.replace(REGISTRY)
+
+
+def _update_registry(mutate):
+    """load -> mutate(reg) in place -> atomic save, serialized by a file lock.
+
+    The atomic save stops a TORN file; this stops a LOST read-modify-write: the
+    parent and a manual `overseer spawn`/`kill` are different processes, and an
+    unlocked load/modify/save would drop one's change (orphaning a child). flock
+    serializes the whole RMW across processes. Returns the post-mutation registry."""
+    DATA.mkdir(parents=True, exist_ok=True)
+    with open(_REG_LOCK, "w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        except OSError:
+            pass            # lock unavailable (rare FS) -> best-effort, never block the op
+        reg = _load_registry()
+        mutate(reg)
+        _save_registry(reg)
+        return reg
 
 
 def _audit(action: str, target: str, detail: str = "") -> None:
@@ -123,9 +144,8 @@ def spawn(name: str, cwd: str | None = None, claude_cmd: str = "claude",
         new_args += ["-c", resolved_cwd]   # tmux sets the start dir — NO shell `cd {cwd}` interpolation
     _tmux(*new_args)
     _tmux("send-keys", "-t", sn, claude_cmd, "Enter")   # launch claude only (cwd already set)
-    reg = _load_registry()
-    reg[_plain(name)] = {"tmux": sn, "cwd": resolved_cwd, "spawned_at": time.time()}
-    _save_registry(reg)
+    entry = {"tmux": sn, "cwd": resolved_cwd, "spawned_at": time.time()}
+    _update_registry(lambda reg: reg.__setitem__(_plain(name), entry))
     _audit("spawn", _plain(name), resolved_cwd or "")
     return sn
 
@@ -204,11 +224,11 @@ def list_children() -> list[str]:
     if r.returncode == 0:
         live = {s[len(PREFIX):] for s in r.stdout.split() if s.startswith(PREFIX)}
     reg = _load_registry()
-    dead = [n for n in reg if n not in live]
-    if dead:  # prune stale entries so a dead name can't later be re-owned by collision
-        for n in dead:
-            del reg[n]
-        _save_registry(reg)
+    if any(n not in live for n in reg):   # prune stale entries (avoid the lock on the hot, no-op path)
+        def _prune(r):                    # re-read under the lock; delete what's not live now
+            for n in [n for n in r if n not in live]:
+                del r[n]
+        reg = _update_registry(_prune)
     return sorted(n for n in reg if n in live)
 
 
@@ -218,10 +238,7 @@ def kill(name: str) -> None:
         _audit("kill-REFUSED", _plain(name), "not an owned child")
         raise DriverError(f"refusing to kill '{name}': not an Overseer-owned child")
     _tmux("kill-session", "-t", session_name(name), check=False)
-    reg = _load_registry()
-    if _plain(name) in reg:
-        del reg[_plain(name)]
-        _save_registry(reg)
+    _update_registry(lambda reg: reg.pop(_plain(name), None))
     _audit("kill", _plain(name))
 
 

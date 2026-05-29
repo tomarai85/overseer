@@ -143,6 +143,30 @@ def run():
     res.append(("activity merges audit logs (skips malformed lines)", len(_acts) == 2))
     res.append(("activity sorts by ts ascending", [a["action"] for a in _acts] == ["relay", "send"]))
 
+    # --- registry RMW is locked: concurrent spawn/kill from different processes must
+    #     not lose each other's update (atomic write covers a torn file; this covers a
+    #     lost read-modify-write). Threads here open separate fds -> flock serializes. ---
+    import threading
+    import time as _t
+    driver._REG_LOCK = _tmp / "children.json.lock"
+    r = driver._update_registry(lambda reg: reg.__setitem__("z", {"cwd": "/z"}))
+    res.append(("_update_registry persists + returns the post-mutation reg",
+                r.get("z") == {"cwd": "/z"} and driver._load_registry().get("z") == {"cwd": "/z"}))
+
+    driver._save_registry({})
+    def _add(k):
+        def m(reg):
+            _t.sleep(0.01)        # widen the RMW window: an UNLOCKED version would lose entries
+            reg[k] = {"cwd": "/" + k}
+        driver._update_registry(m)
+    threads = [threading.Thread(target=_add, args=(k,)) for k in ("a", "b", "c", "d")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    res.append(("concurrent registry updates lose nothing (flock-serialized RMW)",
+                set(driver._load_registry()) == {"a", "b", "c", "d"}))
+
     return res
 
 
