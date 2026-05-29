@@ -138,9 +138,18 @@ def tell(name: str, text: str, context: str | None = None, force: bool = False) 
     _require_owned(name, "target")
     if not (text and text.strip()):
         raise RelayError("refusing to send an empty command")
-    st = _check_quiescent(name, force)
-    body = text if not context else f"{text}\n\n--- context ---\n{context}"
-    driver.send(name, body)
+    # is_owned() is a registry check, not a liveness check, so an owned child that
+    # has since died is still 'owned' — reading/sending then raises DriverError deep
+    # in driver. Convert it to a RelayError so every caller (CLI tell/route, the web
+    # operate panel) that already handles RelayError refuses cleanly instead of
+    # surfacing a traceback / 500 for what is just "that worker is gone".
+    try:
+        st = _check_quiescent(name, force)
+        body = text if not context else f"{text}\n\n--- context ---\n{context}"
+        driver.send(name, body)
+    except driver.DriverError as e:
+        _audit("tell-REFUSED", name, f"unreachable: {e}")
+        raise RelayError(f"owned child '{name}' is unreachable (gone?): {e}") from e
     _audit("tell", name, f"state={st} forced={force} chars={len(body)}")
     return {"target": name, "state_before": st, "chars": len(body), "forced": force}
 
@@ -159,14 +168,20 @@ def relay(src: str, dst: str, frame: str | None = None,
     _require_owned(dst, "target")
     if driver.session_name(src) == driver.session_name(dst):
         raise RelayError("source and target are the same child")
-    body = latest_output(src, max_chars=max_chars)
-    if not body:
-        raise RelayError(f"source '{src}' has no output to relay yet")
-    st = _check_quiescent(dst, force)
-    frame = frame or (f"[relay from worker '{src}' — its latest output follows; "
-                      f"read it and respond / continue as appropriate]")
-    msg = f"{frame}\n\n{body}"
-    driver.send(dst, msg)
+    # Same gone-but-owned guard as tell(): either end may have died since the
+    # registry listed it; surface that as a clean RelayError, not a DriverError.
+    try:
+        body = latest_output(src, max_chars=max_chars)
+        if not body:
+            raise RelayError(f"source '{src}' has no output to relay yet")
+        st = _check_quiescent(dst, force)
+        frame = frame or (f"[relay from worker '{src}' — its latest output follows; "
+                          f"read it and respond / continue as appropriate]")
+        msg = f"{frame}\n\n{body}"
+        driver.send(dst, msg)
+    except driver.DriverError as e:
+        _audit("relay-REFUSED", dst, f"unreachable: {e}")
+        raise RelayError(f"relay failed — '{src}' or '{dst}' is unreachable (gone?): {e}") from e
     _audit("relay", dst, f"from={src} state={st} forced={force} chars={len(msg)}")
     return {"src": src, "dst": dst, "target_state_before": st,
             "chars": len(msg), "forced": force}

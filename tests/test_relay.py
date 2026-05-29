@@ -31,6 +31,7 @@ def check(name, cond):
 _sent: list[tuple[str, str]] = []
 _owned: set[str] = set()
 _pane: dict[str, str] = {}
+_dead: set[str] = set()             # owned in the registry, but the tmux session is gone
 
 QUIET = "ready\n❯ "                 # idle input chevron -> waiting
 BUSY = "running a tool\nesc to interrupt"  # -> working
@@ -41,7 +42,10 @@ def fake_is_owned(name):
 
 
 def fake_read(name, lines=60):
-    return _pane.get(driver._plain(name), "")
+    p = driver._plain(name)
+    if p in _dead:                  # mirror driver.read raising on a gone session
+        raise driver.DriverError(f"no child '{p}'")
+    return _pane.get(p, "")
 
 
 def fake_send(name, text, settle=0.4):
@@ -58,6 +62,7 @@ def reset():
     _sent.clear()
     _owned.clear()
     _pane.clear()
+    _dead.clear()
 
 
 def raises(fn):
@@ -147,6 +152,19 @@ check("relay frames with source name + body",
 # 11. relay refuses a non-owned source
 reset(); _owned.add("b"); _pane["b"] = QUIET
 check("relay refuses non-owned source", raises(lambda: relay.relay("ghost", "b")))
+
+# 12. tell on an owned-but-DEAD child surfaces a clean RelayError, not a DriverError
+#     traceback (is_owned is a registry check, so a crashed child is still 'owned').
+reset(); _owned.add("w1"); _dead.add("w1")
+check("tell on owned-but-dead child -> RelayError (no traceback)",
+      raises(lambda: relay.tell("w1", "hi")))
+check("  -> nothing sent to a dead child", _sent == [])
+
+# 13. relay whose source died mid-flight also refuses cleanly (RelayError, not Driver)
+reset(); _owned.update({"a", "b"}); _dead.add("a"); _pane["b"] = QUIET
+check("relay with a dead source -> RelayError (no traceback)",
+      raises(lambda: relay.relay("a", "b")))
+check("  -> nothing sent when source is dead", _sent == [])
 
 print(f"\n{PASS}/{PASS + FAIL} passed")
 sys.exit(0 if FAIL == 0 else 1)
