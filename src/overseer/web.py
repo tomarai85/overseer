@@ -13,7 +13,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import driver, notify, relay, roster, route
+from . import budget, driver, notify, progress, relay, roster, route, usage
 from .engine import scan_once
 from .store import Store
 
@@ -51,6 +51,18 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
   .dim{color:var(--mut)} .alert{box-shadow:0 0 0 1px #ff5c5c33}
   .empty{color:var(--mut);padding:40px;text-align:center}
   .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px}
+  /* moat overlay: alerts strip + per-row insight */
+  #alerts{margin-bottom:10px}
+  .alert-chip{display:flex;gap:10px;align-items:baseline;padding:9px 13px;margin-bottom:6px;
+    border-radius:9px;background:#1c1410;border-left:3px solid #ffb020}
+  .alert-chip.stalled{border-color:#ff5c5c;background:#1c1012}
+  .alert-chip.spiraling{border-color:#ffb020}
+  .alert-chip.over-budget{border-color:#c98bff;background:#16121c}
+  .alert-chip .k{font-weight:700;font-size:11px;letter-spacing:1px}
+  .alert-chip .n{font-weight:600} .alert-chip .w{color:var(--mut);font-size:12px}
+  .ins .v-stalled{color:#ff7a7a;font-weight:700}
+  .ins .v-spiraling{color:#ffc04d;font-weight:700}
+  .ins .b-over{color:#d6a3ff;font-weight:700} .ins .b-approaching{color:#ffc04d}
   /* operate panel */
   .op{margin-top:22px;border-top:1px solid var(--line);padding-top:16px}
   .op h2{font-size:12px;letter-spacing:2px;color:var(--mut);margin:0 0 4px;font-weight:600}
@@ -75,6 +87,7 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 </style></head><body>
 <header><h1>OVERSEER</h1><span class="sub" id="sub">connecting...</span></header>
 <div class="wrap">
+<div id="alerts"></div>
 <div id="board"></div>
 <div class="op">
   <h2>OPERATE</h2>
@@ -113,24 +126,50 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 const STATES=__STATES__;
 function age(ts){if(!ts)return'-';let d=Math.max(0,Date.now()/1000-ts);
   if(d<60)return Math.floor(d)+'s';if(d<3600)return Math.floor(d/60)+'m';return Math.floor(d/3600)+'h';}
+function fmtTok(n){if(n==null)return'';if(n>=1e6)return(n/1e6).toFixed(1)+'M';
+  if(n>=1e3)return Math.round(n/1e3)+'k';return''+n;}
+function insBits(x){
+  if(!x)return'';let o='';
+  if(x.output)o+=` · ${fmtTok(x.output)} tok`;
+  if(x.verdict==='stalled')o+=` · <span class="v-stalled">stalled</span>`;
+  else if(x.verdict==='spiraling')o+=` · <span class="v-spiraling">spiraling`+
+    (x.rate_per_min?` ${fmtTok(x.rate_per_min)}/m`:``)+`</span>`;
+  if(x.budget_pct!=null){const c=x.budget_state==='over'?'b-over':
+    x.budget_state==='approaching'?'b-approaching':'';
+    o+=` · <span class="${c}">${Math.round(x.budget_pct*100)}% budget</span>`;}
+  return o?`<span class="meta ins">${o}</span>`:'';
+}
+function renderAlerts(alerts){
+  const el=document.getElementById('alerts');
+  if(!alerts||!alerts.length){el.innerHTML='';return;}
+  el.innerHTML=alerts.map(a=>`<div class="alert-chip ${a.kind}">
+    <span class="k">${(a.kind||'').toUpperCase().replace('-',' ')}</span>
+    <span class="n">${a.name}</span><span class="w">${a.why||''}</span></div>`).join('');
+}
 async function tick(){
   try{
-    const r=await fetch('/api/leads');const j=await r.json();
+    const [lr,ir]=await Promise.all([fetch('/api/leads'),fetch('/api/insight').catch(()=>null)]);
+    const j=await lr.json();
+    let ins={alerts:[],by_session:{}};try{if(ir)ins=await ir.json();}catch(e){}
+    const bs=ins.by_session||{};
     const live=j.leads.filter(l=>l.derived_state!=='gone');
     live.sort((a,b)=>(STATES[a.derived_state]?.[2]??9)-(STATES[b.derived_state]?.[2]??9));
     const need=live.filter(l=>['needs-human','crashed','blocked'].includes(l.derived_state)).length;
     document.getElementById('sub').textContent=
-      `${live.length} live leads · ${need} need you · updated ${new Date().toLocaleTimeString()}`;
+      `${live.length} live · ${need} need you · ${(ins.alerts||[]).length} alerts · ${new Date().toLocaleTimeString()}`;
+    renderAlerts(ins.alerts);
     const b=document.getElementById('board');
     if(!live.length){b.innerHTML='<div class="empty">no live sessions</div>';return;}
     b.innerHTML=live.map(l=>{
       const s=STATES[l.derived_state]||['?','#7c8aa5',9];
-      const alert=['needs-human','crashed','blocked'].includes(l.derived_state)?' alert':'';
+      const x=bs[l.session_id];
+      const alert=(['needs-human','crashed','blocked'].includes(l.derived_state)||
+        (x&&['stalled','spiraling'].includes(x.verdict)))?' alert':'';
       const label=l.name||l.domain||'?';
       return `<div class="row${alert}">
         <span class="pill" style="background:${s[1]}">${s[0]}</span>
         <span><span class="name">${label}</span>
-          <span class="meta"> · ${l.last_event||''}</span></span>
+          <span class="meta"> · ${l.last_event||''}</span>${insBits(x)}</span>
         <span class="meta">${age(l.last_mtime)} ago</span>
         <span class="meta dim">${(l.session_id||'').slice(0,8)}</span>
       </div>`;}).join('');
@@ -186,6 +225,57 @@ loadChildren();setInterval(loadChildren,4000);
 </script></body></html>"""
 
 
+def build_insight(leads=None) -> dict:
+    """The monetizable cockpit data, surfaced for the dashboard: per-session output
+    tokens (runaway spotting) + progress verdict (stalled/spiraling = the moat) +
+    budget %, plus a unified 'truly needs you' alerts feed.
+
+    progress.fleet_progress() MUTATES its snapshot (it consumes the token delta to
+    compute the rate), so it must run EXACTLY ONCE per poll — we therefore derive
+    BOTH the per-row verdicts AND the alerts from that single call here, rather than
+    also calling alerts.attention() (which would re-run progress and corrupt the
+    verdict). The inline alert rules mirror alerts.attention exactly; a drift-guard
+    test (test_web) asserts they stay in sync."""
+    if leads is None:
+        try:
+            leads = roster.fetch()
+        except roster.RosterError:
+            leads = []
+    prog = progress.fleet_progress(leads=leads)
+    rates = {s["session_id"]: s["rate_per_min"] for s in prog["sessions"]}
+    budg = {r["session_id"]: r for r in budget.status(leads=leads, rates=rates)["sessions"]}
+    use = {s["session_id"]: s for s in usage.fleet_usage(leads=leads)["sessions"]}
+
+    alerts = []
+    for s in prog["sessions"]:
+        sid, nm = s["session_id"], s["name"]
+        if s["verdict"] == "stalled":
+            alerts.append({"session_id": sid, "name": nm, "kind": "stalled",
+                           "why": f"no new output for {s['flat_for']}s — silent hang?"})
+        elif s["verdict"] == "spiraling":
+            alerts.append({"session_id": sid, "name": nm, "kind": "spiraling",
+                           "why": f"{s['rate_per_min']:,} output tok/min — runaway?"})
+        b = budg.get(sid)
+        if b and b["state"] == "over":
+            eta = f", eta {b['eta_min']}m" if b.get("eta_min") else ""
+            alerts.append({"session_id": sid, "name": nm, "kind": "over-budget",
+                           "why": f"{int((b['pct'] or 0) * 100)}% of {b['budget']:,} tok budget{eta}"})
+    alerts.sort(key=lambda a: {"stalled": 0, "spiraling": 1, "over-budget": 2}.get(a["kind"], 9))
+
+    by_session = {}
+    for s in prog["sessions"]:
+        sid = s["session_id"]
+        b = budg.get(sid, {})
+        by_session[sid] = {
+            "verdict": s.get("verdict"),
+            "rate_per_min": s.get("rate_per_min"),
+            "output": (use.get(sid) or {}).get("output"),
+            "budget_pct": b.get("pct"),
+            "budget_state": b.get("state"),
+        }
+    return {"alerts": alerts, "by_session": by_session}
+
+
 def _poll_loop(db_path, interval: float, stop: threading.Event) -> None:
     # IMPORTANT: open the writer connection INSIDE this thread. sqlite3
     # connections are bound to their creating thread (check_same_thread), so a
@@ -235,6 +325,15 @@ def make_handler(db_path):
                 finally:
                     s.close()
                 self._send(200, json.dumps({"leads": rows}), "application/json")
+            elif self.path.startswith("/api/insight"):
+                # The monetizable cockpit overlay: tokens + progress (the moat) +
+                # budget + the unified alerts feed. Live (roster.fetch), keyed by
+                # session_id so the page merges it onto the state board.
+                try:
+                    ins = build_insight()
+                except Exception:
+                    ins = {"alerts": [], "by_session": {}}   # never break the board
+                self._send(200, json.dumps(ins), "application/json")
             elif self.path.startswith("/api/children"):
                 # OWNED workers only (driver registry) + each one's quiescence,
                 # so the operate panel can offer real targets and show whether it

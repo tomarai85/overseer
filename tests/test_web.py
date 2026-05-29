@@ -18,7 +18,7 @@ from http.server import ThreadingHTTPServer
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from overseer import driver, relay, route, web  # noqa: E402
+from overseer import alerts, budget, driver, progress, relay, route, usage, web  # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -160,6 +160,53 @@ check("POST unknown action -> 404", st == 404)
 # invalid JSON body -> 400 (not a crash)
 st, j = _post_raw(port, "/api/tell", b"{not json")
 check("POST invalid JSON -> 400", st == 400 and "JSON" in j.get("error", ""))
+
+# ---- moat overlay: build_insight + /api/insight + drift guard ----
+# Canned aggregators (the moat backend is tested in its own modules; here we test
+# that the WEB layer composes them correctly and stays in sync with alerts.attention).
+_CANNED_PROG = {"sessions": [
+    {"session_id": "a", "name": "alpha", "verdict": "spiraling", "rate_per_min": 120000, "flat_for": 0.0, "tokens": 500000},
+    {"session_id": "b", "name": "beta", "verdict": "stalled", "rate_per_min": 0, "flat_for": 240.0, "tokens": 300000},
+    {"session_id": "c", "name": "gamma", "verdict": "progressing", "rate_per_min": 5000, "flat_for": 0.0, "tokens": 100000},
+], "flagged": [], "summary": ""}
+_CANNED_BUDG = {"sessions": [
+    {"session_id": "a", "name": "alpha", "output": 500000, "budget": 400000, "pct": 1.25, "state": "over", "eta_min": None},
+    {"session_id": "b", "name": "beta", "output": 300000, "budget": 0, "pct": None, "state": "unset", "eta_min": None},
+    {"session_id": "c", "name": "gamma", "output": 100000, "budget": 200000, "pct": 0.5, "state": "ok", "eta_min": None},
+], "breached": []}
+_CANNED_USE = {"sessions": [{"session_id": "a", "output": 500000}, {"session_id": "b", "output": 300000},
+                            {"session_id": "c", "output": 100000}], "total": {}}
+progress.fleet_progress = lambda leads=None, now=None: _CANNED_PROG
+budget.status = lambda leads=None, rates=None: _CANNED_BUDG
+usage.fleet_usage = lambda leads=None: _CANNED_USE
+
+ins = web.build_insight(leads=[1, 2, 3])
+got = sorted((a["kind"], a["session_id"]) for a in ins["alerts"])
+check("build_insight derives stalled/spiraling/over-budget alerts",
+      got == [("over-budget", "a"), ("spiraling", "a"), ("stalled", "b")])
+check("build_insight merges per-session verdict + budget",
+      ins["by_session"]["a"]["verdict"] == "spiraling" and ins["by_session"]["a"]["budget_state"] == "over"
+      and ins["by_session"]["c"]["budget_pct"] == 0.5)
+# DRIFT GUARD: progress mutates its snapshot so build_insight must NOT also call
+# alerts.attention (it would re-run progress + corrupt the verdict). Instead it
+# rebuilds the alert rules inline — this asserts those rules stay identical to
+# alerts.attention's, on the same data, so they never silently diverge.
+mine = {(a["kind"], a["session_id"]) for a in ins["alerts"]}
+theirs = {(a["kind"], a["session_id"]) for a in alerts.attention(leads=[1, 2, 3])["alerts"]}
+check("build_insight alerts match alerts.attention (no drift)", mine == theirs)
+
+# /api/insight endpoint serves it
+st, j = _req(port, "/api/insight")
+check("GET /api/insight -> 200 with alerts + by_session",
+      st == 200 and len(j.get("alerts", [])) == 3 and "a" in j.get("by_session", {}))
+
+# /api/insight never breaks the board: if an aggregator raises, it returns empty
+_boom = progress.fleet_progress
+progress.fleet_progress = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+st, j = _req(port, "/api/insight")
+check("GET /api/insight survives an aggregator error (empty, not 500)",
+      st == 200 and j.get("alerts") == [] and j.get("by_session") == {})
+progress.fleet_progress = _boom
 
 httpd.shutdown()
 print(f"\n{PASS}/{PASS + FAIL} passed")
