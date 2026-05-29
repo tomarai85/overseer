@@ -89,5 +89,12 @@ def fetch_raw(timeout: float = 15.0) -> list[dict[str, Any]]:
 
 
 def fetch() -> list[Lead]:
-    """Return the live roster as Lead objects. Self's own session is included."""
-    return [Lead.from_json(o) for o in fetch_raw() if o.get("sessionId")]
+    """Return the live roster as Lead objects. Self's own session is included.
+
+    Defensively skips any non-dict / session-id-less array element: fetch_raw
+    guarantees a JSON *list* but not that every element is an object, and a single
+    malformed entry calling `.get` on a non-dict would raise AttributeError — which
+    leaks past every caller's `except RosterError` guard (usage/progress/budget/
+    alerts/CLI) and crashes them. One weird entry must not blank the whole roster."""
+    return [Lead.from_json(o) for o in fetch_raw()
+            if isinstance(o, dict) and o.get("sessionId")]

@@ -40,6 +40,20 @@ def run():
     lead3 = roster.Lead.from_json({"sessionId": "y", "weird": 1})
     res.append(check("parse: extra keys captured", lead3.extra.get("weird") == 1))
 
+    # fetch() defensively skips malformed array elements (non-dict / no sessionId).
+    # fetch_raw guarantees a list but NOT list-of-dicts; calling .get on a non-dict
+    # would raise AttributeError, which leaks past every caller's `except RosterError`.
+    roster.fetch_raw = lambda: [
+        {"sessionId": "ok1", "status": "idle"},
+        None, "stray-string", 123,           # malformed elements must not crash fetch()
+        {"no_session": True},                 # dict but no sessionId -> skipped
+        {"sessionId": "", "status": "busy"},  # empty sessionId -> skipped
+        {"sessionId": "ok2", "status": "busy"},
+    ]
+    leads = roster.fetch()
+    res.append(check("fetch: skips non-dict/empty elements, keeps valid",
+                     [l.session_id for l in leads] == ["ok1", "ok2"]))
+
     # ---- store ----
     tmp = Path(tempfile.mkdtemp()) / "t.db"
     s = Store(tmp)
