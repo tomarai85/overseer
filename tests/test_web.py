@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import sys
 import threading
 import urllib.request
@@ -207,6 +208,43 @@ st, j = _req(port, "/api/insight")
 check("GET /api/insight survives an aggregator error (empty, not 500)",
       st == 200 and j.get("alerts") == [] and j.get("by_session") == {})
 progress.fleet_progress = _boom
+
+# ---- security hardening (Opus + Codex review): CSRF guard + body cap + XSS ----
+def raw_post(path, headers, body=b"{}", send_len=None):
+    """POST with EXACT headers (urllib won't let us forge Host/Origin). Returns status."""
+    cl = send_len if send_len is not None else len(body)
+    head = f"POST {path} HTTP/1.1\r\n" + "".join(f"{k}: {v}\r\n" for k, v in headers.items())
+    head += f"Content-Length: {cl}\r\n\r\n"
+    s = socket.create_connection(("127.0.0.1", port), timeout=5)
+    s.sendall(head.encode() + body)
+    resp = b""
+    while b"\r\n\r\n" not in resp:
+        chunk = s.recv(4096)
+        if not chunk:
+            break
+        resp += chunk
+    s.close()
+    return int(resp.split(b" ", 2)[1]) if resp else 0
+
+OWN = {"Host": f"127.0.0.1:{port}", "Content-Type": "application/json"}
+# same-origin loopback request is allowed through the guard (reaches the handler)
+check("CSRF guard: loopback Host + no Origin -> allowed (not 403)",
+      raw_post("/api/tell", OWN, b'{"name":"builder","text":"hi"}') != 403)
+# DNS-rebinding: a foreign Host (attacker domain resolving to 127.0.0.1) -> 403
+check("CSRF guard: foreign Host -> 403",
+      raw_post("/api/tell", {**OWN, "Host": "evil.example.com"}, b'{"name":"builder","text":"hi"}') == 403)
+# cross-site POST: loopback Host but a foreign Origin -> 403
+check("CSRF guard: foreign Origin -> 403",
+      raw_post("/api/tell", {**OWN, "Origin": "http://evil.example.com"}, b'{"name":"builder","text":"hi"}') == 403)
+# body-size cap: an oversized declared Content-Length -> 413 (before reading the body)
+check("body cap: Content-Length over limit -> 413",
+      raw_post("/api/tell", OWN, b"{}", send_len=web._MAX_BODY + 1) == 413)
+
+# XSS: tainted fields are escaped before innerHTML
+page = web.PAGE
+check("XSS: esc() helper present and applied to name/last_event/alert fields",
+      "const esc=" in page and "esc(l.last_event" in page and "esc(a.name)" in page
+      and "esc(l.name||l.domain" in page)
 
 httpd.shutdown()
 print(f"\n{PASS}/{PASS + FAIL} passed")

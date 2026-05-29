@@ -30,6 +30,8 @@ STATES = {
     "unknown":     ("unknown",   "#7c8aa5", 7),
 }
 
+_MAX_BODY = 1_000_000   # cap POST bodies — operate commands are tiny; reject larger (no OOM)
+
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Overseer</title>
@@ -124,6 +126,11 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 </div>
 <script>
 const STATES=__STATES__;
+// HTML-escape any field that can carry content we don't control before it goes
+// into innerHTML: a worker name / cwd-derived domain, and last_event (which embeds
+// an MCP tool name straight from the transcript) could otherwise inject markup.
+const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>(
+  {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]);
 function age(ts){if(!ts)return'-';let d=Math.max(0,Date.now()/1000-ts);
   if(d<60)return Math.floor(d)+'s';if(d<3600)return Math.floor(d/60)+'m';return Math.floor(d/3600)+'h';}
 function fmtTok(n){if(n==null)return'';if(n>=1e6)return(n/1e6).toFixed(1)+'M';
@@ -142,9 +149,9 @@ function insBits(x){
 function renderAlerts(alerts){
   const el=document.getElementById('alerts');
   if(!alerts||!alerts.length){el.innerHTML='';return;}
-  el.innerHTML=alerts.map(a=>`<div class="alert-chip ${a.kind}">
-    <span class="k">${(a.kind||'').toUpperCase().replace('-',' ')}</span>
-    <span class="n">${a.name}</span><span class="w">${a.why||''}</span></div>`).join('');
+  el.innerHTML=alerts.map(a=>`<div class="alert-chip ${esc(a.kind)}">
+    <span class="k">${esc((a.kind||'').toUpperCase().replace('-',' '))}</span>
+    <span class="n">${esc(a.name)}</span><span class="w">${esc(a.why||'')}</span></div>`).join('');
 }
 async function tick(){
   try{
@@ -165,11 +172,11 @@ async function tick(){
       const x=bs[l.session_id];
       const alert=(['needs-human','crashed','blocked'].includes(l.derived_state)||
         (x&&['stalled','spiraling'].includes(x.verdict)))?' alert':'';
-      const label=l.name||l.domain||'?';
+      const label=esc(l.name||l.domain||'?');
       return `<div class="row${alert}">
         <span class="pill" style="background:${s[1]}">${s[0]}</span>
         <span><span class="name">${label}</span>
-          <span class="meta"> · ${l.last_event||''}</span>${insBits(x)}</span>
+          <span class="meta"> · ${esc(l.last_event||'')}</span>${insBits(x)}</span>
         <span class="meta">${age(l.last_mtime)} ago</span>
         <span class="meta dim">${(l.session_id||'').slice(0,8)}</span>
       </div>`;}).join('');
@@ -297,8 +304,27 @@ def _poll_loop(db_path, interval: float, stop: threading.Event) -> None:
 
 def make_handler(db_path):
     class Handler(BaseHTTPRequestHandler):
+        timeout = 30        # drop a stalled connection (basic slow-loris guard)
+
         def log_message(self, *a):  # quiet
             pass
+
+        def _local_only(self) -> bool:
+            """CSRF / DNS-rebinding guard for the POST action surface: the request
+            must be same-origin to a loopback dashboard. Blocks a malicious page
+            POSTing to 127.0.0.1 (its Origin is a foreign host) and DNS-rebinding
+            (Host is the attacker's domain resolving to loopback). The dashboard's
+            own fetches send Host=127.0.0.1[:port] and either no Origin or a loopback
+            one, so they pass."""
+            host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]").lower()
+            if host not in ("127.0.0.1", "localhost", "::1", ""):
+                return False
+            origin = self.headers.get("Origin")
+            if origin:
+                from urllib.parse import urlparse
+                if (urlparse(origin).hostname or "").lower() not in ("127.0.0.1", "localhost", "::1"):
+                    return False
+            return True
 
         def _send(self, code, body, ctype):
             data = body.encode() if isinstance(body, str) else body
@@ -367,6 +393,18 @@ def make_handler(db_path):
             path = next((a for a in actions if self.path.startswith(a)), None)
             if path is None:
                 self._send(404, json.dumps({"error": "no such action"}), "application/json")
+                return
+            if not self._local_only():
+                self._send(403, json.dumps({"ok": False, "error": "refused: non-local request"}),
+                           "application/json")
+                return
+            try:
+                clen = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                clen = -1
+            if clen > _MAX_BODY:
+                self._send(413, json.dumps({"ok": False, "error": "request body too large"}),
+                           "application/json")
                 return
             body = self._read_json()
             if body is None:
