@@ -52,6 +52,17 @@ def run():
     res.append(("fleet total output", fu["total"]["output"] == 5300))
     res.append(("fleet total messages", fu["total"]["messages"] == 3))
     res.append(("heaviest output sorted first", fu["sessions"][0]["session_id"] == "s2"))
+
+    # cache: an unchanged transcript is served from the (mtime,size) cache; a rewrite
+    # (size/mtime change) invalidates it and re-reads. Uses its own session so the
+    # totals above are untouched.
+    _write(tmp, "cach", [_asst(1, 10)])
+    c1 = usage.session_usage("cach")
+    c2 = usage.session_usage("cach")
+    res.append(("cached read returns same totals", c1 == c2 and c1["output"] == 10))
+    _write(tmp, "cach", [_asst(2, 20), _asst(3, 30)])   # more content -> new size/mtime
+    c3 = usage.session_usage("cach")
+    res.append(("rewrite invalidates the cache", c3["output"] == 50 and c3["messages"] == 2))
     return res
 
 

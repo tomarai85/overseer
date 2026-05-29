@@ -14,12 +14,27 @@ from . import state
 
 FIELDS = ("input", "output", "cache_read", "cache_write")
 
+# Summing the whole transcript on every call is wasteful for the idle sessions that
+# dominate a fleet, and progress/alerts call this every poll cycle. Cache by
+# (mtime, size): an idle transcript doesn't change so we reuse the last sum; an
+# active one (mtime moves each turn) re-reads, as it must.
+_cache: dict[str, tuple] = {}      # session_id -> ((mtime_ns, size), totals)
+_CACHE_CAP = 256
+
 
 def session_usage(session_id: str) -> dict | None:
     """Sum token usage across a session's whole transcript. None if no transcript."""
     t = state.find_transcript(session_id)
     if not t:
         return None
+    try:
+        stt = t.stat()
+    except OSError:
+        return None
+    key = (stt.st_mtime_ns, stt.st_size)
+    hit = _cache.get(session_id)
+    if hit and hit[0] == key:
+        return dict(hit[1])           # copy so a caller can't mutate the cached sum
     tot = {f: 0 for f in FIELDS}
     tot["messages"] = 0
     try:
@@ -43,7 +58,10 @@ def session_usage(session_id: str) -> dict | None:
                 tot["messages"] += 1
     except OSError:
         return None
-    return tot
+    if len(_cache) >= _CACHE_CAP:
+        _cache.clear()                # simple bound; the next polls rebuild it
+    _cache[session_id] = (key, tot)
+    return dict(tot)
 
 
 def fleet_usage(leads=None) -> dict:
