@@ -24,6 +24,7 @@ from . import driver
 HEARTBEAT = driver.DATA / "heartbeat.json"
 STUCK_SEC = 180.0          # owned child frozen this long (no prompt) -> stuck
 READY_PROMPT = "❯"
+_STATUS_LINES = 15         # only the live bottom region carries the current status
 
 # screen lines that are TUI chrome, not conversation (mirrors the GUI cleaner)
 _NOISE = ("bypass permissions", "Welcome back", "Tips for getting started",
@@ -74,7 +75,13 @@ def child_state(name: str, now: float | None = None, hb: dict | None = None) -> 
         return {"name": name, "state": "crashed", "last_change_age": None,
                 "hint": "tmux session gone"}
 
-    raw = driver.read(name, lines=60)
+    try:
+        raw = driver.read(name, lines=60)
+    except driver.DriverError:
+        # The child died between exists() and read() (TOCTOU) — that IS crashed, and
+        # a raw DriverError would otherwise abort the whole supervise scan loop.
+        return {"name": name, "state": "crashed", "last_change_age": None,
+                "hint": "tmux session gone"}
     cleaned = _clean(raw)
     digest = hashlib.sha1(cleaned.encode("utf-8", "ignore")).hexdigest()
 
@@ -87,9 +94,14 @@ def child_state(name: str, now: float | None = None, hb: dict | None = None) -> 
     age = now - last_change
 
     tail = cleaned[-600:]
-    if any(m in tail for m in _PERMISSION_MARKERS):
+    # Match relay.pane_state: scan only the live bottom region for the spinner /
+    # interrupt / permission markers. Scanning the full pane mislabels an idle child
+    # as 'working' (or needs-human) when the marker string merely appears in its
+    # scrollback as output (the false-positive relay confirmed live 2026-05-29).
+    region = "\n".join(raw.splitlines()[-_STATUS_LINES:])
+    if any(m in region for m in _PERMISSION_MARKERS):
         state = "needs-human"
-    elif any(m in raw for m in _WORKING_MARKERS):
+    elif any(m in region for m in _WORKING_MARKERS):
         state = "working"
     elif READY_PROMPT in raw:
         state = "waiting"                               # idle chevron present ANYWHERE in the pane.

@@ -68,6 +68,25 @@ def run():
     existing.add("perm"); panes["perm"] = "Do you want to proceed?\n❯ 1. Yes\n  2. No"
     res.append(("needs-human on a permission prompt", st("perm") == "needs-human"))
 
+    # scrollback false-positive (the bug relay fixed live 2026-05-29): an idle child
+    # whose SCROLLBACK merely mentions a working marker must read 'waiting' — the
+    # marker isn't in the live bottom region.
+    existing.add("scroll")
+    panes["scroll"] = ("the docs note 'esc to interrupt' cancels a run\n"
+                       + "\n".join(["filler"] * 20) + "\n❯ ")
+    res.append(("working marker in scrollback does not false-positive (region scan)",
+                st("scroll") == "waiting"))
+
+    # TOCTOU: a child that dies between exists() and read() reads 'crashed', and the
+    # raw DriverError does not abort the scan.
+    def _raise_read(n, lines=60):
+        if n == "toctou":
+            raise driver.DriverError("gone")
+        return panes.get(n, "")
+    existing.add("toctou"); driver.read = _raise_read
+    res.append(("read DriverError mid-scan -> crashed (no abort)", st("toctou") == "crashed"))
+    driver.read = lambda n, lines=60: panes.get(n, "")   # restore the simple stub
+
     # summary aggregates + flags what needs Tom. Seed the persistent heartbeat so
     # 'frz' reads as stuck (staleness needs history across supervise calls — the
     # first observation always looks fresh, which is correct).
