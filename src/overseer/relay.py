@@ -32,6 +32,30 @@ RELAY_AUDIT = driver.DATA / "relay-audit.log"
 # target states that accept an unforced message (quiescent == safe to type into)
 SAFE_TARGET = {"waiting"}
 
+# Quiescence is read from the child's pane STRUCTURE, not a content hash. A content
+# hash falsely reads an *idle* claude as 'working' forever: the idle TUI animates
+# (cursor / status line), so the hash changes every poll (confirmed by a live test
+# 2026-05-29 — an idle child read 'working' for 24s straight). Pane structure is
+# robust: 'working' shows an interrupt/spinner marker; a permission prompt shows its
+# own markers; otherwise the idle input chevron means the turn is done = safe to type.
+READY_PROMPT = "❯"
+_WORKING_MARKERS = ("esc to interrupt", "✻", "Cogitat", "Thinking", "⏵⏵", "tokens/s")
+_PERMISSION_MARKERS = ("Do you want to proceed", "Do you want to make this edit",
+                       "❯ 1.", "1. Yes", "Allow this", "approve?")
+
+
+def pane_state(name: str) -> str:
+    """Quiescence from the child's pane: waiting | working | needs-human | unknown.
+    `waiting` == quiescent == safe to type into (turn done, no work/permission)."""
+    raw = driver.read(name, lines=50)
+    if any(m in raw for m in _PERMISSION_MARKERS):
+        return "needs-human"
+    if any(m in raw for m in _WORKING_MARKERS):
+        return "working"
+    if READY_PROMPT in raw:
+        return "waiting"
+    return "unknown"
+
 
 class RelayError(RuntimeError):
     pass
@@ -51,8 +75,8 @@ def _require_owned(name: str, role: str) -> None:
 
 
 def _check_quiescent(name: str, force: bool) -> str:
-    """Return the target's current state; raise unless quiescent (or forced)."""
-    st = supervisor.child_state(name).get("state", "unknown")
+    """Return the target's current pane state; raise unless quiescent (or forced)."""
+    st = pane_state(name)
     if st in SAFE_TARGET or force:
         return st
     raise RelayError(

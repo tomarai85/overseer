@@ -1,109 +1,132 @@
 # Overseer
 
-> Working name. A local **meta-orchestrator** for a solo dev running many Claude Code
-> sessions at once — the "manager of managers" that nobody ships yet (see `docs/BUSINESS.md`).
+A local **fleet cockpit** for a solo developer running many AI coding agents at once.
+You talk to **one** parent AI; it spawns and drives child Claude Code workers for you —
+instead of babysitting 7-8 terminals by hand.
 
-You run 7-8+ Claude Code terminals, each itself an Agent-Teams team-lead with its own
-sub-agents and Codex workers. The pain: you have to babysit them — if you don't watch,
-they stop; when one crashes (e.g. a `thinking blocks cannot be modified` 400) nothing
-restarts it; and you can't tell at a glance which pane needs you.
+Native macOS app. Stdlib-only Python core. No cloud, no account, no dependencies.
 
-Overseer sits one level above all of them:
+---
 
-- **Roster** — reads every live session from `claude agents --json`.
-- **State truth** — derives `working / waiting / needs-you / blocked / crashed` from
-  three signals (pid liveness + last conversational transcript record + mtime age),
-  because the raw API only gives `busy/idle`. This is the hard core (`src/overseer/state.py`).
-- **One board** — a single dashboard (terminal or web) of all sessions, the ones that
-  need you floated to the top.
-- **Notify** — pings you *only* when a session enters `needs-you / crashed / blocked`.
-- **(planned)** auto-restart of dead leads via `claude --remote-control`.
+## The problem
 
-Stdlib-only Python. No install, no cloud, no deps.
+You run many Claude Code sessions in parallel. Each is capable, but:
+
+- they **stop and wait** for input — and you don't notice which one needs you;
+- when one **crashes** (e.g. a `thinking blocks cannot be modified` 400) nothing restarts it;
+- a session can **silently hang** or quietly burn tokens while *looking* busy;
+- the bottleneck stops being the AI's speed and becomes **your attention**.
+
+Knowing *which* of N agents is waiting / stuck / dead — and operating them from one
+place — is the whole game. (See `docs/BUSINESS.md` for the honest market read: the
+"manager of agents" space is now crowded; the defensible edge is **state-truth**, not
+"show me terminals in a grid.")
+
+## What it is
+
+| Layer | Role | Where |
+|---|---|---|
+| **Eyes** — state-truth | Derive the TRUE state (`working / waiting / needs-you / blocked / stuck / crashed`) from each session's transcript *content* + pid + record timestamps — not the raw `busy/idle` that naive monitors mislabel (a long *think* is not *idle*). | `src/overseer/state.py` |
+| **Hands** — driver | Spawn child workers in tmux and drive them from outside (`tmux send-keys`); read their screen back. | `src/overseer/driver.py` |
+| **Brain** — parent | One Claude session given a "fleet manager" role, driven headlessly turn-by-turn (`claude -p --resume`). You talk to it; it operates the children. | `src/overseer/parent.py` |
+| **Supervisor** | Unattended watch over owned children: per-child heartbeat, derived state, away-mode summary, alerts. | `src/overseer/supervisor.py` |
+| **Cockpit** — GUI | One native window: parent chat ⟷ each worker's live screen, fleet status, "+ new worker", notifications. | `app/` (Swift) |
+
+The key thing to understand: **the parent and children are not linked by magic.** The
+parent just runs the `overseer` CLI (`spawn` / `send` / `read`), which drives children
+via tmux — exactly what a human would type, automated. No special API, no AI-to-AI
+protocol. That is why it works on stock Claude Code.
 
 ## Quick start
 
 ```bash
 cd ~/overseer
 
-# one-shot board in the terminal
-PYTHONPATH=src python3 -m overseer.cli status
+# 1) See your whole fleet's true state in the terminal
+./bin/overseer status
 
-# live web dashboard (polls every 5s) -> http://127.0.0.1:8899
-PYTHONPATH=src python3 -m overseer.cli serve
+# 2) Build the native app and open it (double-click cockpit)
+./bin/build-app.sh && open dist/Overseer.app
 
-# headless poll loop (logs transitions; pair with OVERSEER_NOTIFY=1 for alerts)
-OVERSEER_NOTIFY=1 PYTHONPATH=src python3 -m overseer.cli daemon 5
+# 3) Or talk to the fleet parent straight from the terminal
+./bin/overseer-parent
+#   then: "start a worker in ~/myrepo and run the tests"  /  "check on it"  /  "OK"
 ```
+
+In the app: left = the parent chat + your workers (with live state) + the monitored
+fleet; the right pane switches between the parent conversation and a selected worker's
+screen. You type to the parent; it spawns / sends / reads workers and reports back.
+Notifications fire only when something needs you (toggle with the bell).
+
+## Safety boundary (enforced, not promised)
+
+Overseer **only ever drives children it spawned itself** (an internal registry of
+`ov-`-prefixed tmux sessions). `send` / `kill` **refuse** any target not in that registry,
+and every `spawn` / `send` / `kill` is appended to `data/driver-audit.log`. So even a
+drifted or prompt-injected parent **cannot** type into your own hand-started terminals —
+the boundary lives in the CLI, not in a model instruction.
 
 ## Commands
 
-| Command | Does |
-|---|---|
-| `status` | scan once, print the board, exit |
-| `scan`   | scan once, print state counts as JSON (for scripting) |
-| `serve [port]` | background poll + web dashboard (default :8899) |
-| `daemon [interval]` | foreground poll loop, logs transitions |
-
-Env:
-- `OVERSEER_NOTIFY=1` — desktop alert (osascript+afplay) on entry to needs-you/crashed/blocked
-- `OVERSEER_DB=/path` — SQLite location (default `~/overseer/data/overseer.db`)
-
-## How state truth works (the part that matters)
-
-`claude agents --json` only tells you `busy | idle | null`. That is not enough to know
-whether a session is *working*, *waiting for you*, *hung*, or *dead*. Overseer enriches
-each session by reading its transcript at `~/.claude/projects/<slug>/<sessionId>.jsonl`,
-skipping the noise record types (`mode`, `permission-mode`, `system`,
-`file-history-snapshot`, ...) to find the **last conversational record**, and combining
-that with `os.kill(pid, 0)` liveness and file mtime age. Rules live in `state.py`; they
-are deliberately conservative — a false `crashed` or false `restart` is expensive.
-
-Tested: `python3 tests/test_state.py` (32 total, stdlib runner; also pytest-compatible).
-
-### Make it trustworthy (opt-in lease hook — v2)
-
-mtime/transcript inference is a heuristic and it can lie. The real fix (Codex's
-"highest-leverage" recommendation) is to have each session **report** its phase via a
-Claude Code hook. `hooks/overseer-lease.py` does this; when a fresh lease exists,
-Overseer trusts it over the heuristic (`src/overseer/lease.py`, `state.py`).
-
-To enable, add the hook to *your* `~/.claude/settings.json` (Overseer never edits it):
-
-```json
-"hooks": {
-  "PreToolUse":      [{"hooks":[{"type":"command","command":"python3 ~/overseer/hooks/overseer-lease.py tool_running"}]}],
-  "PostToolUse":     [{"hooks":[{"type":"command","command":"python3 ~/overseer/hooks/overseer-lease.py working"}]}],
-  "UserPromptSubmit":[{"hooks":[{"type":"command","command":"python3 ~/overseer/hooks/overseer-lease.py working"}]}],
-  "Stop":            [{"hooks":[{"type":"command","command":"python3 ~/overseer/hooks/overseer-lease.py waiting"}]}],
-  "Notification":    [{"hooks":[{"type":"command","command":"python3 ~/overseer/hooks/overseer-lease.py needs-human"}]}]
-}
+```
+overseer status         one-shot board (terminal)
+overseer serve [port]   live web board (default :8899)
+overseer daemon [secs]  headless poll loop (+ OVERSEER_NOTIFY=1 for alerts)
+overseer leads          live sessions as JSON (used by the GUI)
+overseer supervise      away-mode summary over owned children (JSON)
+overseer spawn <name> [cwd]    start a child worker (waits until ready)
+overseer send  <name> <text>   instruct a child (owned only)
+overseer read  <name> [lines]  read a child's screen
+overseer children              list owned children (JSON)
+overseer kill  <name>          stop a child
+overseer parent-send <text>    one turn with the fleet parent (JSON)
+overseer restart [prefix]      dry-run restart planner
+overseer doctor                environment self-check
+overseer demo [port]           web board seeded with every state (synthetic)
 ```
 
-The hook only writes to `data/leases/`, reads nothing sensitive, and always exits 0.
+Env: `OVERSEER_NOTIFY=1` (alert on entry to needs-you/crashed/blocked),
+`OVERSEER_DB=/path` (SQLite location), `OVERSEER_DATA=/path` (registry/heartbeat/audit).
 
-## Layout
+## State truth (the part that matters)
+
+`claude agents --json` only gives `busy | idle | null` — not enough to know whether a
+session is working, waiting for you, hung, or dead. Overseer reads each session's
+transcript (`~/.claude/projects/<slug>/<sessionId>.jsonl`), skips the noise record types,
+and reads the **content** of the last conversational record:
+
+- a last block of `thinking` ⇒ **working** (the case naive mtime monitors get wrong);
+- an assistant `tool_use` with no following `tool_result` ⇒ a pending tool — fresh =
+  working, aged = blocked/hung, idle = waiting on you;
+- assistant `text` ending in a question ⇒ **needs-you**;
+- activity age comes from the record's own timestamp, not the file mtime (housekeeping
+  writes bump mtime but never the conversational timestamp).
+
+Conservative by design — a false `crashed`/`restart` is expensive. The fully trustworthy
+signal is the opt-in per-session lease/heartbeat hook (`docs/STATE-TRUTH.md`,
+`hooks/overseer-lease.py`); when a fresh lease exists, Overseer trusts it over the
+heuristic. Overseer never edits your `~/.claude/settings.json` — the hook is opt-in.
+
+## Project layout
 
 ```
-src/overseer/
-  roster.py   read `claude agents --json` (read-only)
-  state.py    STATE TRUTH derivation (the hard core)
-  store.py    SQLite roster + event log (decoupled writer/reader)
-  engine.py   one poll cycle (+ transition callback)
-  notify.py   needs-you/crashed alerts (macOS, gated by OVERSEER_NOTIFY)
-  web.py      single-pane live dashboard (stdlib http.server)
-  cli.py      status | scan | serve | daemon
-tests/        state-machine unit tests
-docs/         BUSINESS.md (market/moat/monetization)
-.harness/     spec.md (design), progress.md (build log)
+src/overseer/   roster, state (truth), store (sqlite), engine, driver, parent,
+                supervisor, lease (v2 hook), notify, recover, web, cli
+app/            Swift cockpit (Cockpit.swift + main.swift) + Info.plist + tools/make-icon.swift
+bin/            overseer (CLI launcher), overseer-parent, build-app.sh
+hooks/          overseer-lease.py (opt-in per-session heartbeat)
+docs/           BUSINESS.md (market read), STATE-TRUTH.md (the moat + v2 design), ROADMAP.md
+tests/          stdlib tests (state / core / engine / driver / supervisor)
 ```
 
-## Safety
+## Tests
 
-This MVP is **read-only** against your real sessions. It never drives or kills a live
-Claude session yet. Auto-restart (S4) will be tested against disposable sessions first.
+```bash
+for t in state core engine driver supervisor; do PYTHONPATH=src python3 tests/test_$t.py; done
+```
 
 ## Status
 
-MVP / dogfood. See `.harness/progress.md` for what's done and what's next.
-Built overnight 2026-05-29 as an autonomous harness run.
+Working tool, dogfood stage. The state-truth heuristic is good; the fully trustworthy
+signal is the opt-in lease hook. Distribution (a notarized `.app`) and any
+productization are deliberate later steps. Honest competitive read in `docs/BUSINESS.md`.
