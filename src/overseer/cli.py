@@ -95,6 +95,13 @@ def cmd_alerts(_args: list[str]) -> int:
     return 0
 
 
+def cmd_guard(args: list[str]) -> int:
+    """`overseer guard [interval]` — always-on watcher: fires a notification when a
+    session truly needs you (stalled/spiraling/over-budget/needs-human/crashed)."""
+    from . import guard
+    return guard.run(float(args[0]) if args else 10.0)
+
+
 def cmd_budget(args: list[str]) -> int:
     """`overseer budget [set <key> <tokens>]` — per-session token budgets + breach status."""
     from . import budget
@@ -460,6 +467,9 @@ def main(argv: list[str] | None = None) -> int:
         if cmd == "alerts":
             store.close()
             return cmd_alerts(argv[1:])
+        if cmd == "guard":
+            store.close()
+            return cmd_guard(argv[1:])
         if cmd == "autopilot":
             store.close()
             return cmd_autopilot(argv[1:])
