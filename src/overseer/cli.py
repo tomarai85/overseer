@@ -254,12 +254,16 @@ def cmd_children(_args: list[str]) -> int:
 
 
 def cmd_kill(args: list[str]) -> int:
-    """`overseer kill <name>` — terminate a child."""
+    """`overseer kill <name>` — terminate an owned child."""
     from . import driver
     if not args:
         print("usage: overseer kill <name>", file=sys.stderr)
         return 2
-    driver.kill(args[0])
+    try:
+        driver.kill(args[0])
+    except driver.DriverError as e:
+        print(f"kill failed: {e}", file=sys.stderr)
+        return 1
     print(f"killed '{args[0]}'")
     return 0
 
