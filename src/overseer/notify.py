@@ -22,14 +22,19 @@ def enabled() -> bool:
     return os.environ.get("OVERSEER_NOTIFY", "").lower() in ("1", "true", "yes", "on")
 
 
+def _as_str(s: str) -> str:
+    """Escape a string for an AppleScript double-quoted literal (backslash, quote,
+    newline) so a session name/state can't break out of the string or inject."""
+    return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ").replace("\r", " ")
+
+
 def _osascript(title: str, msg: str) -> None:
     if not shutil.which("osascript"):
         return
-    safe = msg.replace('"', "'")
-    safet = title.replace('"', "'")
     try:
         subprocess.run(
-            ["osascript", "-e", f'display notification "{safe}" with title "{safet}"'],
+            ["osascript", "-e",
+             f'display notification "{_as_str(msg)}" with title "{_as_str(title)}"'],
             capture_output=True, timeout=5,
         )
     except Exception:

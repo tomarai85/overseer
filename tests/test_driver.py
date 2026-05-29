@@ -79,21 +79,43 @@ def run():
         except driver.DriverError:
             res.append(("spawn refuses duplicate", True))
 
-        # spawn on a free name issues new-session + a launch send-keys
+        # spawn on a free name: new-session with -c <cwd> (NO shell `cd {cwd} &&`), launch claude
         driver.exists = lambda name: False
         calls.clear()
         sn = driver.spawn("fresh", cwd="/tmp")
         res.append(("spawn returns ov name", sn == "ov-fresh"))
         res.append(("spawn creates session", any(c[0] == "new-session" for c in calls)))
-        res.append(("spawn launches claude in cwd",
-                    any("cd /tmp && claude" in " ".join(c) for c in calls)))
+        res.append(("spawn sets cwd via -c flag (no shell cd interpolation)",
+                    any("-c" in c and "/tmp" in c for c in calls)
+                    and not any("cd /tmp &&" in " ".join(c) for c in calls)))
         res.append(("spawn registers the child as owned", driver.is_owned("fresh")))
 
-        # never touches a non-ov session
+        # spawn rejects an unsafe name (shell/path metacharacters)
+        driver.exists = lambda name: False
+        try:
+            driver.spawn("bad;rm -rf", cwd="/tmp")
+            res.append(("spawn rejects unsafe name", False))
+        except driver.DriverError:
+            res.append(("spawn rejects unsafe name", True))
+
+        # kill REFUSES an unowned target (the boundary hole Codex caught: kill had no guard)
         driver.exists = lambda name: True
+        try:
+            driver.kill("zzz_not_owned")
+            res.append(("kill refuses unowned target", False))
+        except driver.DriverError:
+            res.append(("kill refuses unowned target", True))
+        # kill on an OWNED child proceeds
         calls.clear()
-        driver.kill("zzz")
-        res.append(("kill only touches ov-prefixed", all("ov-zzz" in c for c in calls)))
+        driver.kill("worker1")
+        res.append(("kill on owned touches ov-worker1", any("ov-worker1" in c for c in calls)))
+
+        # read also refuses an unowned target
+        try:
+            driver.read("zzz_not_owned")
+            res.append(("read refuses unowned target", False))
+        except driver.DriverError:
+            res.append(("read refuses unowned target", True))
     finally:
         driver._tmux, driver.exists = orig_tmux, orig_exists
 
@@ -107,7 +129,7 @@ def run_live():
     """
     res = []
     name = "selftest"
-    driver.kill(name)  # clean any leftover
+    driver._tmux("kill-session", "-t", driver.session_name(name), check=False)  # raw cleanup (kill() now requires ownership)
     driver.spawn(name, cwd=str(Path.home() / "overseer"))
     ready = driver.wait_ready(name, timeout=45)
     res.append(("live child boots to prompt", ready))

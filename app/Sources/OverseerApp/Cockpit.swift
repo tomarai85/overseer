@@ -77,10 +77,14 @@ final class Cockpit: ObservableObject {
     /// Fire a native macOS notification via osascript — works for a non-bundled
     /// binary (UNUserNotificationCenter needs a bundle id; osascript doesn't).
     nonisolated static func postNotification(_ title: String, _ body: String) {
-        let safe = body.replacingOccurrences(of: "\"", with: "'")
+        func esc(_ s: String) -> String {
+            s.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+                .replacingOccurrences(of: "\n", with: " ")
+        }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        p.arguments = ["-e", "display notification \"\(safe)\" with title \"\(title)\""]
+        p.arguments = ["-e", "display notification \"\(esc(body))\" with title \"\(esc(title))\""]
         try? p.run()
     }
 
@@ -106,8 +110,10 @@ final class Cockpit: ObservableObject {
         p.executableURL = URL(fileURLWithPath: bin)
         p.arguments = args
         let out = Pipe(); p.standardOutput = out; p.standardError = Pipe()
-        do { try p.run(); p.waitUntilExit() } catch { return Data() }
-        return out.fileHandleForReading.readDataToEndOfFile()
+        do { try p.run() } catch { return Data() }
+        let data = out.fileHandleForReading.readDataToEndOfFile()  // drain before wait (no pipe-buffer deadlock)
+        p.waitUntilExit()
+        return data
     }
 
     func refresh() {
@@ -189,7 +195,8 @@ final class Cockpit: ObservableObject {
     /// sends a first task). Selects it so Tom sees its screen immediately.
     func spawnWorker(name: String, dir: String, task: String) {
         let n = name.trimmingCharacters(in: .whitespaces)
-        guard !n.isEmpty else { return }
+        // names go to the CLI as argv + become tmux session names — keep them tame
+        guard !n.isEmpty, n.range(of: "^[A-Za-z0-9._-]+$", options: .regularExpression) != nil else { return }
         let d = dir.trimmingCharacters(in: .whitespaces)
         let t = task.trimmingCharacters(in: .whitespacesAndNewlines)
         Task.detached {

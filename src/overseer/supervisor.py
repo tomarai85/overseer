@@ -58,7 +58,9 @@ def _load_hb() -> dict:
 
 def _save_hb(hb: dict) -> None:
     driver.DATA.mkdir(parents=True, exist_ok=True)
-    HEARTBEAT.write_text(json.dumps(hb))
+    tmp = HEARTBEAT.with_suffix(".json.tmp")   # atomic: write temp then rename
+    tmp.write_text(json.dumps(hb))
+    tmp.replace(HEARTBEAT)
 
 
 def child_state(name: str, now: float | None = None, hb: dict | None = None) -> dict:

@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
 
 PREFIX = "ov-"            # our sessions are ov-<name>; we never touch others
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")   # names become tmux ids + argv — keep tame
 READY_PROMPT = "❯"   # the claude TUI input chevron ❯ = booted + idle
 TRUST_MARKERS = ("Do you trust the files", "trust the files in this folder")
 
@@ -58,6 +60,12 @@ def _save_registry(reg: dict) -> None:
 
 def _audit(action: str, target: str, detail: str = "") -> None:
     DATA.mkdir(parents=True, exist_ok=True)
+    try:  # bounded: keep the log from growing without limit
+        if AUDIT.exists() and AUDIT.stat().st_size > 512_000:
+            tail = AUDIT.read_text(errors="ignore").splitlines()[-2000:]
+            AUDIT.write_text("\n".join(tail) + "\n")
+    except OSError:
+        pass
     with open(AUDIT, "a", encoding="utf-8") as f:
         f.write(json.dumps({"ts": time.time(), "action": action,
                             "target": target, "detail": detail[:200]}) + "\n")
@@ -92,21 +100,32 @@ def spawn(name: str, cwd: str | None = None, claude_cmd: str = "claude",
     Returns the tmux session name. The child appears in `claude agents --json`
     a few seconds later; correlate it with `find_lead(cwd, after_ts)`.
     """
+    if not _SAFE_NAME.match(_plain(name)):
+        raise DriverError(f"refusing to spawn: name '{name}' has unsafe characters")
     sn = session_name(name)
     if exists(sn):
         raise DriverError(f"child '{name}' already exists (kill it first)")
-    _tmux("new-session", "-d", "-s", sn, "-x", str(width), "-y", str(height))
-    launch = f"cd {cwd} && {claude_cmd}" if cwd else claude_cmd
-    _tmux("send-keys", "-t", sn, launch, "Enter")
+    new_args = ["new-session", "-d", "-s", sn, "-x", str(width), "-y", str(height)]
+    resolved_cwd = None
+    if cwd:
+        cdir = Path(cwd).expanduser()
+        if not cdir.is_dir():
+            raise DriverError(f"refusing to spawn: cwd '{cwd}' is not a directory")
+        resolved_cwd = str(cdir)
+        new_args += ["-c", resolved_cwd]   # tmux sets the start dir — NO shell `cd {cwd}` interpolation
+    _tmux(*new_args)
+    _tmux("send-keys", "-t", sn, claude_cmd, "Enter")   # launch claude only (cwd already set)
     reg = _load_registry()
-    reg[_plain(name)] = {"tmux": sn, "cwd": cwd, "spawned_at": time.time()}
+    reg[_plain(name)] = {"tmux": sn, "cwd": resolved_cwd, "spawned_at": time.time()}
     _save_registry(reg)
-    _audit("spawn", _plain(name), cwd or "")
+    _audit("spawn", _plain(name), resolved_cwd or "")
     return sn
 
 
 def read(name: str, lines: int = 60) -> str:
     """Return the child's current screen (last `lines` non-empty-trimmed)."""
+    if not is_owned(name):
+        raise DriverError(f"refusing to read '{name}': not an Overseer-owned child")
     sn = session_name(name)
     if not exists(sn):
         raise DriverError(f"no child '{name}'")
@@ -163,11 +182,20 @@ def list_children() -> list[str]:
     r = _tmux("list-sessions", "-F", "#{session_name}", check=False)
     if r.returncode == 0:
         live = {s[len(PREFIX):] for s in r.stdout.split() if s.startswith(PREFIX)}
-    return sorted(n for n in _load_registry() if n in live)
+    reg = _load_registry()
+    dead = [n for n in reg if n not in live]
+    if dead:  # prune stale entries so a dead name can't later be re-owned by collision
+        for n in dead:
+            del reg[n]
+        _save_registry(reg)
+    return sorted(n for n in reg if n in live)
 
 
 def kill(name: str) -> None:
-    """Terminate a child (and its tmux session). No-op if already gone."""
+    """Terminate an OWNED child (and its tmux session). Refuses non-owned targets."""
+    if not is_owned(name):
+        _audit("kill-REFUSED", _plain(name), "not an owned child")
+        raise DriverError(f"refusing to kill '{name}': not an Overseer-owned child")
     _tmux("kill-session", "-t", session_name(name), check=False)
     reg = _load_registry()
     if _plain(name) in reg:
