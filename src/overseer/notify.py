@@ -13,9 +13,13 @@ import time
 
 ALERT_STATES = {"needs-human", "crashed", "blocked"}
 _SOUND = "/System/Library/Sounds/Submarine.aiff"
-# simple per-session debounce so a flapping session doesn't spam
-_last_fired: dict[str, float] = {}
+# Debounce per (session, STATE), not per session: a session that escalates
+# needs-human -> crashed within the window must still ring (a crash is exactly when
+# Tom needs to know) — a per-session key would suppress it. Same-state flapping is
+# still debounced. Pruned below so a 24/7 daemon's map can't grow unbounded.
+_last_fired: dict[tuple[str, str], float] = {}
 _DEBOUNCE_SEC = 120.0
+_PRUNE_AT = 256          # prune stale keys once the map grows past this
 
 
 def enabled() -> bool:
@@ -54,9 +58,14 @@ def on_transition(session_id: str, prev: str | None, new: str, label: str) -> No
     if not enabled() or new not in ALERT_STATES:
         return
     now = time.time()
-    if now - _last_fired.get(session_id, 0) < _DEBOUNCE_SEC:
+    key = (session_id, new)
+    if now - _last_fired.get(key, 0) < _DEBOUNCE_SEC:
         return
-    _last_fired[session_id] = now
+    _last_fired[key] = now
+    if len(_last_fired) > _PRUNE_AT:        # bound the map in a long-running daemon
+        cutoff = now - _DEBOUNCE_SEC
+        for k in [k for k, t in _last_fired.items() if t < cutoff]:
+            del _last_fired[k]
     titles = {"needs-human": "Needs you", "crashed": "Crashed", "blocked": "Blocked?"}
     _osascript(f"Overseer — {titles.get(new, new)}", f"{label}  ({prev or '?'} -> {new})")
     _sound()
