@@ -67,6 +67,24 @@ def cmd_scan(store: Store) -> int:
     return 0
 
 
+def cmd_leads(store: Store) -> int:
+    """`overseer leads` — scan once + emit live leads as JSON (for the GUI shell)."""
+    try:
+        scan_once(store)
+    except roster.RosterError:
+        pass  # emit last-known
+    rows = [r for r in store.all_leads() if r["derived_state"] != "gone"]
+    rows.sort(key=lambda r: _STATE_GLYPH.get(r["derived_state"], ("", 9))[1])
+    out = [{
+        "session_id": r["session_id"],
+        "name": r["name"] or (r["domain"] or "?"),
+        "state": r["derived_state"],
+        "age": _age(r["last_mtime"]),
+    } for r in rows]
+    print(json.dumps(out))
+    return 0
+
+
 def cmd_demo(argv: list[str]) -> int:
     """`overseer demo [port]` — serve a board seeded with every state (synthetic).
 
@@ -267,6 +285,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_status(store)
         if cmd == "scan":
             return cmd_scan(store)
+        if cmd == "leads":
+            return cmd_leads(store)
         if cmd == "daemon":
             interval = float(argv[1]) if len(argv) > 1 else 5.0
             return cmd_daemon(store, interval)
