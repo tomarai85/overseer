@@ -88,6 +88,20 @@ def cmd_progress(_args: list[str]) -> int:
     return 0
 
 
+def cmd_budget(args: list[str]) -> int:
+    """`overseer budget [set <key> <tokens>]` — per-session token budgets + breach status."""
+    from . import budget
+    if args and args[0] == "set":
+        if len(args) < 3:
+            print("usage: overseer budget set <name|session-id|default> <output_tokens>", file=sys.stderr)
+            return 2
+        budget.set_budget(args[1], int(args[2]))
+        print(json.dumps({"set": args[1], "budget": int(args[2])}))
+        return 0
+    print(json.dumps(budget.status()))
+    return 0
+
+
 def cmd_leads(store: Store) -> int:
     """`overseer leads` — scan once + emit live leads as JSON (for the GUI shell)."""
     try:
@@ -433,6 +447,9 @@ def main(argv: list[str] | None = None) -> int:
         if cmd == "progress":
             store.close()
             return cmd_progress(argv[1:])
+        if cmd == "budget":
+            store.close()
+            return cmd_budget(argv[1:])
         if cmd == "autopilot":
             store.close()
             return cmd_autopilot(argv[1:])

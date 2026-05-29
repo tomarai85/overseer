@@ -91,12 +91,15 @@ def child_state(name: str, now: float | None = None, hb: dict | None = None) -> 
         state = "needs-human"
     elif any(m in raw for m in _WORKING_MARKERS):
         state = "working"
-    elif raw.rstrip().endswith(READY_PROMPT) or f"{READY_PROMPT} " in raw[-200:]:
-        state = "waiting"                               # idle at the prompt — checked BEFORE the age
-                                                        # heuristic: an idle claude TUI animates
-                                                        # (cursor/status), so the content hash never
-                                                        # goes stale and age<8 would wrongly read an
-                                                        # idle child as 'working' forever (live-confirmed)
+    elif READY_PROMPT in "\n".join(raw.splitlines()[-15:]):
+        state = "waiting"                               # idle input chevron visible in the live bottom
+                                                        # region. Checked BEFORE the age heuristic (the
+                                                        # idle TUI animates -> hash never stales -> age<8
+                                                        # would mislabel idle as 'working' forever). And
+                                                        # scanned over the last LINES, not endswith/last-
+                                                        # 200-chars: the status footer (⏵⏵ bypass perms,
+                                                        # weekly usage) renders BELOW the ❯ prompt, so the
+                                                        # chevron is never the literal last characters.
     elif age < 8:
         state = "working"                               # pane changed recently, no idle prompt yet
     elif age >= STUCK_SEC:
