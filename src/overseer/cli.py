@@ -67,6 +67,13 @@ def cmd_scan(store: Store) -> int:
     return 0
 
 
+def cmd_supervise(_args: list[str]) -> int:
+    """`overseer supervise` — away-mode summary over owned children (JSON)."""
+    from . import supervisor
+    print(json.dumps(supervisor.summary()))
+    return 0
+
+
 def cmd_leads(store: Store) -> int:
     """`overseer leads` — scan once + emit live leads as JSON (for the GUI shell)."""
     try:
@@ -310,6 +317,9 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_scan(store)
         if cmd == "leads":
             return cmd_leads(store)
+        if cmd == "supervise":
+            store.close()
+            return cmd_supervise(argv[1:])
         if cmd == "daemon":
             interval = float(argv[1]) if len(argv) > 1 else 5.0
             return cmd_daemon(store, interval)
