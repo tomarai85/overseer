@@ -94,7 +94,14 @@ def send(message: str, timeout: float = 300.0) -> dict:
         raise ParentError("empty message")
     binp = _claude_bin()
     sid = _session_id()
+    # command-bridge: the guard hook (parent-bash-guard.py, loaded via --settings)
+    # blocks any Bash that isn't an `overseer ...` call, so the parent physically
+    # cannot bypass the driver's ownership guards by running raw tmux/rm/etc.
+    # (verified 2026-05-29: blocks tmux, allows overseer, even with skip-permissions).
+    sandbox = HERE / "parent" / "sandbox-settings.json"
     cmd = [binp, "-p", "--output-format", "json", "--dangerously-skip-permissions"]
+    if sandbox.exists():
+        cmd += ["--settings", str(sandbox)]
     if sid:
         cmd += ["--resume", sid]
     else:

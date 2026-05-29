@@ -20,4 +20,9 @@ echo "  e.g.  「Helix のテスト直して始めて」「note 見て」「OK�
 echo "  it operates children via ~/overseer/bin/overseer (never your own sessions)." >&2
 echo >&2
 
-exec "$CLAUDE" --dangerously-skip-permissions --append-system-prompt-file "$PARENT_MD" "$@"
+# command-bridge: the guard hook (via --settings) blocks any Bash that isn't an
+# `overseer ...` call, so the parent can't bypass the driver guards with raw tmux/rm.
+SANDBOX="$HERE/parent/sandbox-settings.json"
+SETTINGS_ARG=()
+[ -f "$SANDBOX" ] && SETTINGS_ARG=(--settings "$SANDBOX")
+exec "$CLAUDE" --dangerously-skip-permissions "${SETTINGS_ARG[@]}" --append-system-prompt-file "$PARENT_MD" "$@"
