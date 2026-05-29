@@ -168,6 +168,81 @@ def cmd_restart(store: Store, args: list[str]) -> int:
     return 0
 
 
+def cmd_spawn(args: list[str]) -> int:
+    """`overseer spawn <name> [cwd]` — launch a Claude child in tmux + wait for ready."""
+    from . import driver
+    if not args:
+        print("usage: overseer spawn <name> [cwd]", file=sys.stderr)
+        return 2
+    name, cwd = args[0], (args[1] if len(args) > 1 else None)
+    try:
+        sn = driver.spawn(name, cwd=cwd)
+    except driver.DriverError as e:
+        print(f"spawn failed: {e}", file=sys.stderr)
+        return 1
+    print(f"spawned '{name}' (tmux: {sn}) — booting...")
+    if driver.wait_ready(name, timeout=40):
+        print(f"child '{name}' is ready. send it work: overseer send {name} \"<prompt>\"")
+        return 0
+    print(f"child '{name}' spawned but did not reach the prompt in 40s "
+          f"(check: overseer read {name})", file=sys.stderr)
+    return 1
+
+
+def cmd_send(args: list[str]) -> int:
+    """`overseer send <name> <text...>` — type a prompt into a child and submit."""
+    from . import driver
+    if len(args) < 2:
+        print("usage: overseer send <name> <text...>", file=sys.stderr)
+        return 2
+    name, text = args[0], " ".join(args[1:])
+    try:
+        driver.send(name, text)
+    except driver.DriverError as e:
+        print(f"send failed: {e}", file=sys.stderr)
+        return 1
+    print(f"sent to '{name}': {text}")
+    return 0
+
+
+def cmd_read(args: list[str]) -> int:
+    """`overseer read <name> [lines]` — print the child's current screen."""
+    from . import driver
+    if not args:
+        print("usage: overseer read <name> [lines]", file=sys.stderr)
+        return 2
+    name = args[0]
+    lines = int(args[1]) if len(args) > 1 else 60
+    try:
+        print(driver.read(name, lines=lines))
+    except driver.DriverError as e:
+        print(f"read failed: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_children(_args: list[str]) -> int:
+    """`overseer children` — list driver-managed children."""
+    from . import driver
+    kids = driver.list_children()
+    if not kids:
+        print("no driver-managed children (spawn one: overseer spawn <name> [cwd])")
+        return 0
+    print(f"{len(kids)} managed child(ren): " + ", ".join(kids))
+    return 0
+
+
+def cmd_kill(args: list[str]) -> int:
+    """`overseer kill <name>` — terminate a child."""
+    from . import driver
+    if not args:
+        print("usage: overseer kill <name>", file=sys.stderr)
+        return 2
+    driver.kill(args[0])
+    print(f"killed '{args[0]}'")
+    return 0
+
+
 def cmd_daemon(store: Store, interval: float = 5.0) -> int:
     print(f"overseer daemon: polling every {interval}s (Ctrl-C to stop)", file=sys.stderr)
     while True:
@@ -202,6 +277,12 @@ def main(argv: list[str] | None = None) -> int:
             return web.serve(port=port)
         if cmd == "restart":
             return cmd_restart(store, argv[1:])
+        if cmd in ("spawn", "send", "read", "children", "kill"):
+            store.close()  # driver commands don't touch the db
+            return {
+                "spawn": cmd_spawn, "send": cmd_send, "read": cmd_read,
+                "children": cmd_children, "kill": cmd_kill,
+            }[cmd](argv[1:])
         if cmd == "doctor":
             return cmd_doctor(store)
         if cmd == "demo":

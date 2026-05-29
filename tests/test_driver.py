@@ -1,0 +1,126 @@
+"""Tests for driver: tmux spawn/send/read mechanics.
+
+  PYTHONPATH=src python3 tests/test_driver.py
+
+Fast unit tests stub tmux (no subprocess). The live end-to-end test actually
+spawns a Claude child and is gated behind OVERSEER_LIVE_TEST=1 (costs tokens).
+"""
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from overseer import driver  # noqa: E402
+
+
+def run():
+    res = []
+
+    # --- session_name always ends up ov-prefixed, exactly once ---
+    res.append(("name gets prefix", driver.session_name("foo") == "ov-foo"))
+    res.append(("prefixed name unchanged", driver.session_name("ov-foo") == "ov-foo"))
+
+    # --- record every tmux call so we can assert on the command shape ---
+    calls = []
+
+    def fake_tmux(*args, check=True):
+        calls.append(list(args))
+        class R:  # minimal CompletedProcess stand-in
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return R()
+
+    orig_tmux, orig_exists = driver._tmux, driver.exists
+    driver._tmux = fake_tmux
+    try:
+        # send: literal text THEN a separate Enter (submission is deliberate)
+        driver.exists = lambda name: True
+        calls.clear()
+        driver.send("worker1", "do the thing")
+        literal = [c for c in calls if "-l" in c]
+        enters = [c for c in calls if c[-1] == "Enter"]
+        res.append(("send uses -l literal", literal and literal[0][-1] == "do the thing"))
+        res.append(("send submits with separate Enter", len(enters) == 1))
+        res.append(("send targets ov-prefixed session",
+                    all("ov-worker1" in c for c in calls)))
+
+        # send refuses empty text (no accidental bare Enter)
+        try:
+            driver.send("worker1", "")
+            res.append(("send refuses empty", False))
+        except driver.DriverError:
+            res.append(("send refuses empty", True))
+
+        # spawn refuses an existing child (no silent clobber)
+        driver.exists = lambda name: True
+        try:
+            driver.spawn("dup")
+            res.append(("spawn refuses duplicate", False))
+        except driver.DriverError:
+            res.append(("spawn refuses duplicate", True))
+
+        # spawn on a free name issues new-session + a launch send-keys
+        driver.exists = lambda name: False
+        calls.clear()
+        sn = driver.spawn("fresh", cwd="/tmp")
+        res.append(("spawn returns ov name", sn == "ov-fresh"))
+        res.append(("spawn creates session", any(c[0] == "new-session" for c in calls)))
+        res.append(("spawn launches claude in cwd",
+                    any("cd /tmp && claude" in " ".join(c) for c in calls)))
+
+        # never touches a non-ov session
+        driver.exists = lambda name: True
+        calls.clear()
+        driver.kill("zzz")
+        res.append(("kill only touches ov-prefixed", all("ov-zzz" in c for c in calls)))
+    finally:
+        driver._tmux, driver.exists = orig_tmux, orig_exists
+
+    return res
+
+
+def run_live():
+    """End-to-end: spawn a real Claude child, drive it, read the answer, kill.
+
+    Gated: set OVERSEER_LIVE_TEST=1 to run (spawns a real session, uses tokens).
+    """
+    res = []
+    name = "selftest"
+    driver.kill(name)  # clean any leftover
+    driver.spawn(name, cwd=str(Path.home() / "overseer"))
+    ready = driver.wait_ready(name, timeout=45)
+    res.append(("live child boots to prompt", ready))
+    if ready:
+        driver.send(name, "2 たす 2 は？答えは数字だけ、一言で。")
+        import time
+        deadline = time.time() + 30
+        answered = False
+        while time.time() < deadline:
+            if "4" in driver.read(name):
+                answered = True
+                break
+            time.sleep(1.0)
+        res.append(("live child executes injected prompt (answers 4)", answered))
+    driver.kill(name)
+    return res
+
+
+def test_driver():
+    for name, ok in run():
+        assert ok, name
+
+
+if __name__ == "__main__":
+    rows = run()
+    if os.environ.get("OVERSEER_LIVE_TEST") == "1":
+        print("  (running LIVE end-to-end test — spawns a real Claude child)")
+        rows += run_live()
+    passed = sum(1 for _, ok in rows if ok)
+    for name, ok in rows:
+        print(f"  {'PASS' if ok else 'FAIL'}  {name}")
+    print(f"\n{passed}/{len(rows)} passed")
+    sys.exit(0 if passed == len(rows) else 1)
