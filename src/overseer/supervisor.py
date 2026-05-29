@@ -30,7 +30,7 @@ _NOISE = ("bypass permissions", "Welcome back", "Tips for getting started",
           "/release-notes", "MCP server", "What's new", "Opus 4.8 is here",
           "Claude Code v", "for agents", "shift+tab")
 _BOX = "│╭╮╰╯─━┄┈ ▐▛▜▌▝▘▀\t"
-_WORKING_MARKERS = ("esc to interrupt", "✻", "Cogitat", "Thinking", "tokens", "⏵")
+_WORKING_MARKERS = ("esc to interrupt", "✻", "Cogitat", "Thinking")  # NOT "⏵"/"tokens": those are idle status chrome ("⏵⏵ bypass permissions" footer) -> false-positive working
 _PERMISSION_MARKERS = ("Do you want to proceed", "Do you want to make this edit",
                        "❯ 1.", "1. Yes", "Allow this", "approve")
 
@@ -91,10 +91,14 @@ def child_state(name: str, now: float | None = None, hb: dict | None = None) -> 
         state = "needs-human"
     elif any(m in raw for m in _WORKING_MARKERS):
         state = "working"
-    elif age < 8:
-        state = "working"                               # pane just changed
     elif raw.rstrip().endswith(READY_PROMPT) or f"{READY_PROMPT} " in raw[-200:]:
-        state = "waiting"                               # idle at the prompt
+        state = "waiting"                               # idle at the prompt — checked BEFORE the age
+                                                        # heuristic: an idle claude TUI animates
+                                                        # (cursor/status), so the content hash never
+                                                        # goes stale and age<8 would wrongly read an
+                                                        # idle child as 'working' forever (live-confirmed)
+    elif age < 8:
+        state = "working"                               # pane changed recently, no idle prompt yet
     elif age >= STUCK_SEC:
         state = "stuck"                                 # frozen, no prompt
     else:

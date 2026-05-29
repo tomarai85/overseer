@@ -51,6 +51,14 @@ def run():
     existing.add("idle"); panes["idle"] = "❯ "
     res.append(("waiting when idle at prompt + quiet", st("idle", seeded_hb("idle", 100)) == "waiting"))
 
+    # REGRESSION (live finding 2026-05-29): an idle child with a FRESH heartbeat (age 0)
+    # must still read 'waiting'. The real idle TUI animates, so the content hash never
+    # goes stale -> a naive 'age<8 => working' check (run before the prompt check) read
+    # every idle child as 'working' forever. The idle-prompt check must win over age.
+    existing.add("idlefresh"); panes["idlefresh"] = "❯ "
+    res.append(("idle reads waiting even with a fresh heartbeat (prompt beats age<8)",
+                st("idlefresh") == "waiting"))
+
     # stuck: frozen a long time, no prompt
     existing.add("frz"); panes["frz"] = "running a long thing with no prompt and no spinner"
     res.append(("stuck when frozen > STUCK_SEC with no prompt",
