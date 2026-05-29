@@ -208,6 +208,21 @@ def run(tmp: Path) -> list[tuple[str, bool, str]]:
     state.PROJECTS_DIR = tmp
     lead = roster.Lead(session_id="titled", pid=live, raw_status="idle")
     t("derive() returns the title for the label", state.derive(lead).get("title"), "My Session")
+
+    # ---- detect_loop: the 'stuck/looping' primitive (conservative, exact-match) ----
+    def _tu(name, inp):
+        return {"type": "assistant", "message": {"role": "assistant",
+                "content": [{"type": "tool_use", "name": name, "input": inp}]}}
+    t("loop: same tool+input 3x -> flags the tool",
+      state.detect_loop([_tu("Bash", {"cmd": "ls"})] * 3), "Bash")
+    t("loop: varied tools -> None (not a loop)",
+      state.detect_loop([_tu("Bash", {"cmd": "ls"}), _tu("Read", {"p": "a"}), _tu("Edit", {"p": "b"})]),
+      None)
+    t("loop: only 2 repeats (< threshold) -> None",
+      state.detect_loop([_tu("Bash", {"cmd": "ls"})] * 2), None)
+    t("loop: same tool DIFFERENT input (legit retry) -> None",
+      state.detect_loop([_tu("Bash", {"cmd": "a"}), _tu("Bash", {"cmd": "b"}), _tu("Bash", {"cmd": "c"})]),
+      None)
     return results
 
 

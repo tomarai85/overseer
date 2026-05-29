@@ -190,6 +190,42 @@ def session_title(records: list[dict[str, Any]]) -> str | None:
     return None
 
 
+def detect_loop(records: list[dict[str, Any]], window: int = 8, repeat: int = 3) -> str | None:
+    """Flag a likely LOOP: the same (tool, input) fingerprint repeated `repeat`+ times
+    within the last `window` tool calls. The 'stuck/looping' state NO shipped competitor
+    derives (the research's white space). Deliberately CONSERVATIVE — exact (name, input)
+    match + a high repeat threshold — so a legitimate retry (same tool, different args)
+    never false-fires: a false 'stuck' would be the exact notification spam the product
+    exists to kill. Returns the repeated tool name, or None.
+
+    NOTE (2026-05-30): standalone + tested, NOT yet wired into the live state path. Wiring
+    it into a 'stuck/looping' verdict needs the drift-guard + threshold tuning done in
+    daylight (see docs CONCEPT-SHARPENED 'tomorrow'). Shipping the tested primitive now."""
+    fps: list[str] = []
+    for rec in records:
+        if rec.get("type") != "assistant":
+            continue
+        msg = rec.get("message") if isinstance(rec.get("message"), dict) else {}
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for b in content:
+            if isinstance(b, dict) and b.get("type") == "tool_use":
+                try:
+                    key = json.dumps(b.get("input"), sort_keys=True, default=str)[:400]
+                except (TypeError, ValueError):
+                    key = str(b.get("input"))[:400]
+                fps.append(f"{b.get('name')}\x00{key}")
+    recent = fps[-window:]
+    counts: dict[str, int] = {}
+    for fp in recent:
+        counts[fp] = counts.get(fp, 0) + 1
+    for fp, n in counts.items():
+        if n >= repeat:
+            return fp.split("\x00", 1)[0]            # the repeated tool's name
+    return None
+
+
 def _looks_like_question(txt: str) -> bool:
     """The turn ends by asking the human. Beyond a strict trailing '?', also catch a
     posed choice whose '?' sits just above a trailing enumerated options block
