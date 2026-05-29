@@ -482,16 +482,16 @@ struct WorkerView: View {
         validateResult = "validating…"
         Task.detached {
             let data = Cockpit.run(["validate", name])
-            var msg = "validate: no result"
-            if let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let st = o["status"] as? String {
+            let msg: String = {
+                guard let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let st = o["status"] as? String else { return "validate: no result" }
                 let cmd = (o["cmd"] as? String).map { " (\($0))" } ?? ""
                 switch st {
-                case "pass": msg = "✓ pass\(cmd)"
-                case "fail": msg = "✗ fail\(cmd) — rc \(o["returncode"] as? Int ?? -1)"
-                default:     msg = "• \(st)" + ((o["hint"] as? String).map { " — \($0)" } ?? "")
+                case "pass": return "✓ pass\(cmd)"
+                case "fail": return "✗ fail\(cmd) — rc \(o["returncode"] as? Int ?? -1)"
+                default:     return "• \(st)" + ((o["hint"] as? String).map { " — \($0)" } ?? "")
                 }
-            }
+            }()
             await MainActor.run { self.validateResult = msg; self.validating = false }
         }
     }
