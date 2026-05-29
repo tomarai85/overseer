@@ -2,27 +2,40 @@
 
 `claude agents --json` only gives busy/idle (and sometimes null). The states a
 meta-orchestrator actually needs are: working / waiting / needs-human / blocked /
-crashed / done. We derive them from three observable signals, conservatively
-(a wrong 'crashed' or 'blocked' is expensive):
+crashed / done. We derive them from observable signals, conservatively (a wrong
+'crashed' or 'blocked' is expensive):
 
-  1. pid liveness          -> os.kill(pid, 0)
-  2. last CONVERSATIONAL    -> last user/assistant record in the transcript,
-     transcript record         skipping the noise types (mode, permission-mode,
-                                system, file-history-snapshot, attachment,
-                                last-prompt, ai-title, queue-operation, agent-name)
-  3. transcript mtime age  -> staleness
+  1. pid liveness            -> os.kill(pid, 0)
+  2. roster status           -> busy | idle (from `claude agents --json`)
+  3. last CONVERSATIONAL      -> last user/assistant record (noise types skipped),
+     record + its blocks         and crucially its CONTENT shape (thinking /
+                                  text / tool_use / tool_result)
+  4. activity timestamp      -> the `timestamp` ON the last conversational record
+                                  (real activity), NOT the file mtime, which
+                                  housekeeping/noise writes bump around.
 
-Calibrated against real transcripts 2026-05-29:
-  - a working session's last conversational record is an assistant message whose
-    final content block is `tool_use` (it is mid-tool), and mtime is fresh.
-  - an idle session's tail is mostly system/mode noise; the last conversational
-    record is an assistant `text` turn (it finished, waiting for the human).
+Why content, not just mtime (the gap that makes naive monitors useless — e.g.
+a tool that only times out at 5min idle mislabels a session that is mid-think):
+  - last block `thinking`   => the model is REASONING right now -> working
+                               (a long think writes nothing else; mtime-only
+                                tools wrongly call this idle).
+  - last conv is an assistant ending on `tool_use` with NO following user
+    `tool_result` => the tool has NOT returned. Fresh = working; aged = the tool
+    is stuck or a permission prompt is waiting -> blocked / needs-human.
+  - a returned tool shows up as a USER record carrying `tool_result`, so if the
+    LAST conversational record is that result, the tool completed cleanly.
+  - assistant `text` ending in a question => it is asking the human -> needs-human.
+
+Calibrated against real transcripts 2026-05-29. The fully trustworthy signal is
+still the per-session lease/heartbeat (docs/STATE-TRUTH.md); these heuristics are
+the best we can do for un-instrumented sessions.
 """
 from __future__ import annotations
 
 import json
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -35,14 +48,11 @@ PROJECTS_DIR = Path.home() / ".claude" / "projects"
 # the purpose of "what is this session waiting on right now".
 CONVERSATIONAL = {"user", "assistant"}
 
-# Seconds. Conservative on purpose — false 'blocked'/'crashed' is costly.
-# NOTE (Codex 2026-05-29): mtime is NOT a reliable progress signal — long thinking
-# or long tool execution can write nothing (looks stale), and housekeeping/noise
-# writes can update it (looks fresh). These thresholds are heuristics for the MVP;
-# the trustworthy answer is the per-session lease/heartbeat contract in docs/STATE-TRUTH.md.
-STALE_BLOCKED_SEC = 600.0       # busy + no transcript write for 10min -> suspect hung
-NEEDS_HUMAN_MIN_AGE = 10.0      # idle+tool_use must persist this long before alerting
-                                # (avoids the "tool emitted, result not yet written" race)
+# Seconds. Conservative on purpose — false 'blocked'/'crashed'/'needs-human' is costly.
+STALE_BLOCKED_SEC = 600.0       # alive + pending tool, no activity 10min -> hung suspect
+NEEDS_HUMAN_MIN_AGE = 10.0      # an idle pending-tool / question must persist this long
+                                # before alerting (avoids the "tool just emitted, result
+                                # not written yet" tail race -> notify spam)
 
 
 def _pid_alive(pid: int | None) -> bool:
@@ -103,11 +113,78 @@ def _record_role_and_blocks(rec: dict[str, Any]) -> tuple[str | None, list[str]]
     return role, blocks
 
 
+def _last_text(rec: dict[str, Any]) -> str:
+    msg = rec.get("message") if isinstance(rec.get("message"), dict) else {}
+    content = msg.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        for b in reversed(content):
+            if isinstance(b, dict) and b.get("type") == "text":
+                return b.get("text") or ""
+    return ""
+
+
+def _tool_name(rec: dict[str, Any]) -> str | None:
+    msg = rec.get("message") if isinstance(rec.get("message"), dict) else {}
+    content = msg.get("content")
+    if isinstance(content, list):
+        for b in reversed(content):
+            if isinstance(b, dict) and b.get("type") == "tool_use":
+                return b.get("name")
+    return None
+
+
+def _parse_ts(ts: Any) -> float | None:
+    """ISO-8601 (with trailing Z) -> epoch seconds. Records carry these; noise
+    records do not, which is fine — we only read it off conversational records."""
+    if not isinstance(ts, str):
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
 def last_conversational(records: list[dict[str, Any]]) -> dict[str, Any] | None:
     for rec in reversed(records):
         if rec.get("type") in CONVERSATIONAL:
             return rec
     return None
+
+
+class TailSignals:
+    """What the transcript tail tells us about the session, content-aware."""
+
+    __slots__ = ("role", "last_block", "pending_tool", "thinking", "asked_question",
+                 "is_tool_result", "tool_name", "activity_ts", "last_event")
+
+    def __init__(self, conv: dict[str, Any] | None):
+        role, blocks = _record_role_and_blocks(conv) if conv else (None, [])
+        last_block = blocks[-1] if blocks else None
+        self.role = role
+        self.last_block = last_block
+        # A returned tool comes back as a USER record carrying tool_result, so if
+        # the LAST conversational record is an assistant ending on tool_use, the
+        # result has NOT arrived yet -> the tool is pending.
+        self.pending_tool = (role == "assistant" and last_block == "tool_use")
+        self.thinking = (role == "assistant" and last_block == "thinking")
+        self.is_tool_result = (role == "user" and last_block == "tool_result")
+        self.tool_name = _tool_name(conv) if (conv and self.pending_tool) else None
+        txt = _last_text(conv) if (conv and role == "assistant" and last_block == "text") else ""
+        self.asked_question = txt.strip().endswith(("?", "？")) if txt else False
+        self.activity_ts = _parse_ts(conv.get("timestamp")) if conv else None
+        # human-readable "why" for the board (observability)
+        if self.pending_tool:
+            self.last_event = f"tool_use:{self.tool_name or '?'} (pending)"
+        elif self.thinking:
+            self.last_event = "thinking"
+        elif self.asked_question:
+            self.last_event = "text (question)"
+        elif role and last_block:
+            self.last_event = f"{role}:{last_block}"
+        else:
+            self.last_event = role or "unknown"
 
 
 def derive(lead: Any) -> dict[str, Any]:
@@ -117,24 +194,24 @@ def derive(lead: Any) -> dict[str, Any]:
     now = time.time()
     transcript = find_transcript(lead.session_id)
     domain = transcript.parent.name if transcript else None
-    last_mtime = transcript.stat().st_mtime if transcript else None
-    age = (now - last_mtime) if last_mtime else None
+    file_mtime = transcript.stat().st_mtime if transcript else None
 
     records = _tail_records(transcript) if transcript else []
     conv = last_conversational(records)
-    role, blocks = _record_role_and_blocks(conv) if conv else (None, [])
-    ended_tool_use = bool(blocks) and blocks[-1] == "tool_use"
-    last_event = f"{role}:{blocks[-1]}" if role and blocks else (role or "unknown")
+    sig = TailSignals(conv)
+
+    # Activity age from the record's OWN timestamp when present (true activity),
+    # else fall back to the file mtime. This is what makes staleness trustworthy:
+    # noise/housekeeping writes bump file mtime but never the conversational ts.
+    activity_ts = sig.activity_ts if sig.activity_ts is not None else file_mtime
+    age = (now - activity_ts) if activity_ts is not None else None
 
     raw = (lead.raw_status or "").lower()
     # Codex 2026-05-29: a session listed by `claude agents --json` is live by
     # definition, so only trust a dead-pid signal when we actually HAVE a pid.
-    # pid=None => assume alive (the roster vouched for it). Disappearance from the
-    # roster is handled separately by store.mark_gone, not here.
     alive = True if lead.pid is None else _pid_alive(lead.pid)
 
     # ---- v2: prefer an explicit hook-reported lease over transcript heuristics ----
-    # (Codex's highest-leverage fix; see docs/STATE-TRUTH.md + hooks/overseer-lease.py)
     lrec = lease.read(lead.session_id)
     if lrec and lease.is_fresh(lrec, now):
         phase = lrec.get("phase", "")
@@ -142,44 +219,48 @@ def derive(lead: Any) -> dict[str, Any]:
             state = "crashed" if phase in lease.ACTIVE_PHASES else "done"
         else:
             state = lease.PHASE_TO_STATE.get(phase, "working")
-        return {
-            "domain": domain,
-            "derived_state": state,
-            "last_event": f"lease:{phase}",
-            "last_mtime": last_mtime,
-        }
+        return {"domain": domain, "derived_state": state,
+                "last_event": f"lease:{phase}", "last_mtime": activity_ts}
 
-    # ---- fallback: conservative transcript heuristic (un-instrumented sessions) ----
+    # ---- fallback: content-aware transcript heuristic (un-instrumented sessions) ----
     if not alive:
-        # Only the unambiguous mid-tool death reads as 'crashed'. A clean
-        # assistant text end, a trailing user/tool_result, or a missing
-        # transcript reads as 'done' (Codex: avoid false crashed).
-        state = "crashed" if ended_tool_use else "done"
+        # Only an unambiguous mid-tool death reads as 'crashed' (the tool never
+        # returned). A clean text end / trailing tool_result / no transcript = done.
+        state = "crashed" if sig.pending_tool else "done"
+    elif sig.pending_tool:
+        # The tool has not returned. Fresh = running normally. Aged splits by
+        # whether the process is still computing (busy=hung tool) or parked
+        # (idle=almost certainly a permission/approval prompt waiting on Tom).
+        if age is not None and age >= STALE_BLOCKED_SEC:
+            state = "blocked"                       # tool stuck for 10min+ -> hung
+        elif raw == "busy":
+            state = "working"                       # tool actively running
+        elif age is not None and age >= NEEDS_HUMAN_MIN_AGE:
+            state = "needs-human"                   # idle + unresolved tool = waiting on Tom
+        else:
+            state = "working"                       # transient tail race
+    elif sig.thinking:
+        state = "working"                           # mid-reasoning (NOT idle) — the
+                                                    # signal naive mtime monitors miss
     elif raw == "busy":
-        if age is not None and age > STALE_BLOCKED_SEC:
-            state = "blocked"            # alive + busy but transcript frozen -> hung suspect
+        if age is not None and age >= STALE_BLOCKED_SEC:
+            state = "blocked"                       # busy but frozen -> hung suspect
         else:
             state = "working"
+    elif sig.role == "user" and not sig.is_tool_result:
+        state = "working"                           # human just spoke; agent about to respond
+    elif sig.role == "assistant" and sig.asked_question:
+        # a clean turn that ends in a question is genuinely asking Tom
+        state = "needs-human" if (age is not None and age >= NEEDS_HUMAN_MIN_AGE) else "working"
+    elif sig.role == "assistant":
+        state = "waiting"                           # turn complete, awaiting Tom's prompt
+    elif sig.is_tool_result:
+        state = "working"                           # result just landed; agent resuming
+    elif raw == "idle":
+        state = "waiting"
     else:
-        # idle, or null status — derive from the conversation
-        if role == "user":
-            state = "working"            # human just spoke; agent about to respond
-        elif role == "assistant" and ended_tool_use:
-            # idle + last block tool_use: could be a real permission/input wait,
-            # OR a transient tail race (tool just emitted, result not written yet).
-            # Require it to have persisted before alerting, to avoid notify spam.
-            state = "needs-human" if (age is not None and age > NEEDS_HUMAN_MIN_AGE) else "working"
-        elif role == "assistant":
-            state = "waiting"            # turn complete, waiting for Tom's next prompt
-        elif raw == "idle":
-            state = "waiting"
-        else:
-            # null status + no conversational record: fall back on freshness
-            state = "working" if (age is not None and age < 60) else "waiting"
+        # null status + no usable conversational record: fall back on freshness
+        state = "working" if (age is not None and age < 60) else "waiting"
 
-    return {
-        "domain": domain,
-        "derived_state": state,
-        "last_event": last_event,
-        "last_mtime": last_mtime,
-    }
+    return {"domain": domain, "derived_state": state,
+            "last_event": sig.last_event, "last_mtime": activity_ts}

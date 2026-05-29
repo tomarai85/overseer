@@ -34,6 +34,24 @@ def _user(text: str = "hi") -> dict:
     return {"type": "user", "message": {"role": "user", "content": text}}
 
 
+def _assistant_text(text: str) -> dict:
+    """An assistant turn whose final block is real text (for question detection)."""
+    return {"type": "assistant", "message": {"role": "assistant",
+            "content": [{"type": "text", "text": text}]}}
+
+
+def _iso(epoch: float) -> str:
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _assistant_ts(blocks: list[str], ts_epoch: float) -> dict:
+    """Assistant record carrying its own activity timestamp (real transcripts do)."""
+    r = _assistant(blocks)
+    r["timestamp"] = _iso(ts_epoch)
+    return r
+
+
 NOISE = [{"type": "system"}, {"type": "mode"}, {"type": "permission-mode"},
          {"type": "file-history-snapshot"}]
 
@@ -92,6 +110,22 @@ def run(tmp: Path) -> list[tuple[str, bool, str]]:
         ("null status + fresh -> working",
          _derive(tmp, "s8", NOISE + [_assistant(["text"])], pid=live, raw=None),
          "waiting"),
+        # ---- content-aware refinements (2026-05-29): the signals naive mtime monitors miss ----
+        ("working: idle but last block is 'thinking' (mid-reasoning, NOT idle)",
+         _derive(tmp, "t1", NOISE + [_assistant(["text", "thinking"])], pid=live, raw="idle", mtime_age=30),
+         "working"),
+        ("needs-human: assistant text ends in a question, persisted",
+         _derive(tmp, "q1", NOISE + [_assistant_text("どっちがいい？")], pid=live, raw="idle", mtime_age=30),
+         "needs-human"),
+        ("waiting: assistant text WITHOUT a question (clean turn end)",
+         _derive(tmp, "q2", NOISE + [_assistant_text("やっておきました。")], pid=live, raw="idle", mtime_age=30),
+         "waiting"),
+        ("blocked: record-timestamp 20min old beats a FRESH file mtime (true staleness)",
+         _derive(tmp, "ts1", NOISE + [_assistant_ts(["tool_use"], time.time() - 1200)], pid=live, raw="busy"),
+         "blocked"),
+        ("working: record-timestamp fresh beats a STALE file mtime (noise didn't really stall it)",
+         _derive(tmp, "ts2", NOISE + [_assistant_ts(["tool_use"], time.time() - 2)], pid=live, raw="busy", mtime_age=1200),
+         "working"),
         # ---- v2 lease overrides heuristic ----
         ("lease fresh 'needs-human' overrides heuristic (transcript says working)",
          _derive(tmp, "l1", NOISE + [_assistant(["tool_use"])], pid=live, raw="busy",
