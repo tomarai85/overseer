@@ -18,6 +18,17 @@ struct ChatMsg: Identifiable, Decodable, Hashable {
     var id: String { "\(ts)-\(role)-\(text.hashValue)" }
 }
 
+struct Worker: Decodable, Hashable {
+    let name: String
+    let state: String
+    let hint: String?
+}
+
+struct Supervise: Decodable {
+    let children: [Worker]
+    let summary: String
+}
+
 enum Selection: Hashable { case parent, worker(String) }
 
 func glyph(_ state: String) -> String {
@@ -48,7 +59,8 @@ func stateColor(_ state: String) -> Color {
 @MainActor
 final class Cockpit: ObservableObject {
     @Published var leads: [Lead] = []
-    @Published var workers: [String] = []
+    @Published var workersState: [Worker] = []
+    @Published var awaySummary: String = ""
     @Published var messages: [ChatMsg] = []
     @Published var selection: Selection = .parent
     @Published var input: String = ""
@@ -103,16 +115,34 @@ final class Cockpit: ObservableObject {
         polling = true
         Task.detached {
             let leadsData = Self.run(["leads"])
-            let childData = Self.run(["children"])
+            let supData = Self.run(["supervise"])
             let leads = (try? JSONDecoder().decode([Lead].self, from: leadsData)) ?? []
-            let workers = (try? JSONDecoder().decode([String].self, from: childData)) ?? []
+            let sup = try? JSONDecoder().decode(Supervise.self, from: supData)
             await MainActor.run {
                 self.detectAndNotify(leads)
+                self.detectWorkerAlerts(sup?.children ?? [])
                 self.leads = leads
-                self.workers = workers
+                self.workersState = sup?.children ?? []
+                self.awaySummary = sup?.summary ?? ""
                 self.polling = false
             }
         }
+    }
+
+    /// Alert on an owned child entering stuck/crashed/needs-human (debounced).
+    func detectWorkerAlerts(_ workers: [Worker]) {
+        guard notify else { return }
+        let alert: Set<String> = ["stuck", "crashed", "needs-human"]
+        let now = Date().timeIntervalSince1970
+        for w in workers where alert.contains(w.state) {
+            let key = "worker:" + w.name
+            if prevState[key] != w.state, now - (lastNotified[key] ?? 0) > 120 {
+                Self.postNotification("Overseer — worker", "\(w.name) — \(w.state)")
+                lastNotified[key] = now
+            }
+            prevState[key] = w.state
+        }
+        for w in workers where !alert.contains(w.state) { prevState["worker:" + w.name] = w.state }
     }
 
     func loadHistory() {
@@ -222,15 +252,16 @@ struct Sidebar: View {
                     selected: c.selection == .parent) { c.selection = .parent }
             }
             Section {
-                if c.workers.isEmpty {
+                if c.workersState.isEmpty {
                     Text("none yet — ask the parent, or tap +")
                         .font(.caption).foregroundColor(.secondary)
                 } else {
-                    ForEach(c.workers, id: \.self) { w in
-                        row(title: w, glyphStr: "▸", color: .primary,
-                            selected: c.selection == .worker(w)) {
-                            c.selection = .worker(w); c.refreshWorker(w)
+                    ForEach(c.workersState, id: \.self) { w in
+                        row(title: w.name, glyphStr: glyph(w.state), color: stateColor(w.state),
+                            selected: c.selection == .worker(w.name)) {
+                            c.selection = .worker(w.name); c.refreshWorker(w.name)
                         }
+                        .help(w.state + (w.hint.map { " — " + $0 } ?? ""))
                     }
                 }
             } header: {
@@ -256,15 +287,21 @@ struct Sidebar: View {
         }
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom) {
-            HStack {
-                Text(c.counts.isEmpty ? "—" : c.counts)
-                    .font(.caption.monospaced()).foregroundColor(.secondary)
-                Spacer()
-                Toggle(isOn: $c.notify) {
-                    Image(systemName: c.notify ? "bell.fill" : "bell.slash")
+            VStack(spacing: 3) {
+                if !c.awaySummary.isEmpty && c.awaySummary != "no owned workers" {
+                    Text(c.awaySummary).font(.caption2).foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading).lineLimit(1)
                 }
-                .toggleStyle(.button).font(.caption)
-                .help("Notify on needs-you / crashed")
+                HStack {
+                    Text(c.counts.isEmpty ? "—" : c.counts)
+                        .font(.caption.monospaced()).foregroundColor(.secondary)
+                    Spacer()
+                    Toggle(isOn: $c.notify) {
+                        Image(systemName: c.notify ? "bell.fill" : "bell.slash")
+                    }
+                    .toggleStyle(.button).font(.caption)
+                    .help("Notify on needs-you / crashed / stuck")
+                }
             }
             .padding(6).background(.thinMaterial)
         }
