@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        installMainMenu()   // without an Edit menu, Cmd+C/V/X/A do nothing in macOS
         let hosting = NSHostingController(rootView: CockpitView())
         window = NSWindow(contentViewController: hosting)
         window.title = "Overseer — Fleet Cockpit"
@@ -40,6 +41,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func showWindow() {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// macOS wires Cmd+C/V/X/A through the Edit menu's standard responder
+    /// actions. A bare NSApplication has no main menu, so copy/paste are dead
+    /// until we install one. (App menu added too, for a real Quit.)
+    func installMainMenu() {
+        let main = NSMenu()
+
+        let appItem = NSMenuItem()
+        main.addItem(appItem)
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "Hide Overseer", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Quit Overseer", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appItem.submenu = appMenu
+
+        let editItem = NSMenuItem()
+        main.addItem(editItem)
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = edit
+
+        NSApp.mainMenu = main
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { false }

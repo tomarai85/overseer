@@ -178,7 +178,9 @@ struct Sidebar: View {
                         Text(l.name).lineLimit(1).truncationMode(.middle)
                         Spacer()
                         Text(l.age).font(.caption2).foregroundColor(.secondary)
-                    }.font(.caption)
+                    }
+                    .font(.caption)
+                    .help(l.state)   // hover shows the state word (⚠ = needs-you, not an error)
                 }
             }
         }
