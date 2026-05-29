@@ -21,8 +21,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window = NSWindow(contentViewController: hosting)
         window.title = "Overseer — Fleet Cockpit"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        window.setContentSize(NSSize(width: 960, height: 640))
-        window.center()
+        window.setFrameAutosaveName("OverseerCockpitWindow")   // persist size + position
+        if !window.setFrameUsingName("OverseerCockpitWindow") {
+            window.setContentSize(NSSize(width: 960, height: 640))
+            window.center()
+        }
         window.makeKeyAndOrderFront(nil)
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)

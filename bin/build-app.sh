@@ -15,7 +15,8 @@ rm -rf "$APP"
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
 cp "$HERE/app/.build/release/OverseerApp" "$CONTENTS/MacOS/Overseer"
 cp "$HERE/app/Info.plist" "$CONTENTS/Info.plist"
-# bundle the app icon if S7 generated one
+# app icon: regenerate from source if missing, then bundle it
+[ -f "$HERE/app/Resources/Overseer.icns" ] || swift "$HERE/app/tools/make-icon.swift" >/dev/null 2>&1 || true
 [ -f "$HERE/app/Resources/Overseer.icns" ] && cp "$HERE/app/Resources/Overseer.icns" "$CONTENTS/Resources/" || true
 
 # ad-hoc sign so Gatekeeper lets a locally-built app run (real notarization is
