@@ -308,7 +308,17 @@ def derive(lead: Any) -> dict[str, Any]:
         else:
             state = "working"
     elif sig.role == "user" and not sig.is_tool_result:
-        state = "working"                           # human just spoke; agent about to respond
+        # Human just spoke; a live agent should be responding -> working. BUT if this
+        # prompt has sat unanswered (idle, no progress) well past any turn-start, the
+        # agent never picked it up — queued / failed start / hung — and a plain
+        # 'working' here sticks FOREVER (STATE-TRUTH mislabel #3, previously
+        # "v1 mitigation: none"). Conservatively drop to 'waiting' rather than claim
+        # progress that isn't happening. (raw=='busy' was already handled above, so
+        # this only fires on an idle/null session whose prompt is genuinely stale.)
+        if age is not None and age >= STALE_BLOCKED_SEC:
+            state = "waiting"
+        else:
+            state = "working"                       # human just spoke; agent about to respond
     elif sig.role == "assistant" and sig.asked_question:
         # a clean turn that ends in a question is genuinely asking Tom
         state = "needs-human" if (age is not None and age >= NEEDS_HUMAN_MIN_AGE) else "working"

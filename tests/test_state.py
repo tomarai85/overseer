@@ -108,6 +108,12 @@ def run(tmp: Path) -> list[tuple[str, bool, str]]:
         ("working: idle but last record is user (about to respond)",
          _derive(tmp, "s4", NOISE + [_user()], pid=live, raw="idle"),
          "working"),
+        # STATE-TRUTH mislabel #3 (was "v1 mitigation: none"): an idle session whose last
+        # record is a user prompt left UNANSWERED past STALE_BLOCKED_SEC was stuck on
+        # 'working' forever (queued / failed start / hung). Now conservatively 'waiting'.
+        ("waiting: idle + last record is user but STALE (agent never picked it up)",
+         _derive(tmp, "s4b", NOISE + [_user()], pid=live, raw="idle", mtime_age=700),
+         "waiting"),
         ("done (not crashed): pid dead but last conv is a user tool_result",
          _derive(tmp, "s9", NOISE + [_user("tool_result")], pid=dead, raw="idle"),
          "done"),
