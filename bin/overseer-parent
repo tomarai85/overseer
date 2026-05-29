@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# overseer-parent — launch the FLEET PARENT: a Claude session that operates your
+# child workers for you. Talk to it ("start the Helix tests", "check on note",
+# "OK"); it spawns/sends/reads children via the overseer CLI and reports back.
+#
+# This is the "operate" cockpit in its minimal form (no GUI yet) — you converse
+# with one AI instead of babysitting many terminals. The GUI (a window with the
+# chat + switchable child views) wraps THIS later.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")/.." && pwd)"
+PARENT_MD="$HERE/parent/PARENT.md"
+CLAUDE="${OVERSEER_CLAUDE:-$HOME/.claude/tools/claude-retry-wrapper.sh}"
+
+[ -f "$PARENT_MD" ] || { echo "missing $PARENT_MD" >&2; exit 1; }
+[ -x "$CLAUDE" ] || CLAUDE="$(command -v claude)"
+
+echo "overseer-parent: starting the fleet parent. Talk to it in plain language." >&2
+echo "  e.g.  「Helix のテスト直して始めて」「note 見て」「OK、次いって」" >&2
+echo "  it operates children via ~/overseer/bin/overseer (never your own sessions)." >&2
+echo >&2
+
+exec "$CLAUDE" --dangerously-skip-permissions --append-system-prompt-file "$PARENT_MD" "$@"
