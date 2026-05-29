@@ -6,10 +6,17 @@ and on a gone child, refuses non-owned / empty prompt).
 """
 import os
 import sys
+import tempfile
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from overseer import autopilot, driver, relay  # noqa: E402
+
+# Isolate the audit log so autopilot._audit doesn't write test entries into the
+# real data/autopilot-audit.log (which `overseer activity` reads).
+driver.DATA = Path(tempfile.mkdtemp())
+autopilot.AUTOPILOT_AUDIT = driver.DATA / "autopilot-audit.log"
 
 PASS = 0
 FAIL = 0

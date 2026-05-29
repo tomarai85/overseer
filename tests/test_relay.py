@@ -8,10 +8,19 @@ attachment, force override, and bot-to-bot framing.
 """
 import os
 import sys
+import tempfile
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from overseer import driver, relay  # noqa: E402
+
+# Isolate the audit log to a tmpdir — otherwise relay._audit writes test entries
+# ('tell w1', 'relay b', ...) into the real data/relay-audit.log, which then leak
+# into `overseer activity` (the live ticker). RELAY_AUDIT is bound at import, so
+# redirect it explicitly, not just driver.DATA.
+driver.DATA = Path(tempfile.mkdtemp())
+relay.RELAY_AUDIT = driver.DATA / "relay-audit.log"
 
 PASS = 0
 FAIL = 0
