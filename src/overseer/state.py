@@ -146,11 +146,55 @@ def _parse_ts(ts: Any) -> float | None:
         return None
 
 
+# Records that are INJECTED scaffolding, not a real conversational turn: a
+# context-compaction summary, a transcript-only meta note, or the caveat /
+# local-command wrapper Claude Code writes around a slash command. They carry
+# type=="user" but no human typed them. Treating one as "the last turn" misreads
+# an idle (just-compacted) session as 'working' (it hits the user-just-spoke
+# branch in derive) — the SAME idle-reads-as-working failure the supervisor had.
+# Skip them so we classify on the last REAL turn instead.
+_INJECTED_FLAGS = ("isCompactSummary", "isVisibleInTranscriptOnly", "isMeta")
+_INJECTED_TEXT = ("This session is being continued from a previous",
+                  "Caveat: The messages below were generated",
+                  "<command-name>", "<local-command-stdout>")
+
+
+def _is_injected(rec: dict[str, Any]) -> bool:
+    if any(rec.get(f) for f in _INJECTED_FLAGS):
+        return True
+    msg = rec.get("message") if isinstance(rec.get("message"), dict) else {}
+    content = msg.get("content")
+    head = content[:200] if isinstance(content, str) else ""
+    return any(m in head for m in _INJECTED_TEXT)
+
+
 def last_conversational(records: list[dict[str, Any]]) -> dict[str, Any] | None:
     for rec in reversed(records):
-        if rec.get("type") in CONVERSATIONAL:
+        if rec.get("type") in CONVERSATIONAL and not _is_injected(rec):
             return rec
     return None
+
+
+def _looks_like_question(txt: str) -> bool:
+    """The turn ends by asking the human. Beyond a strict trailing '?', also catch a
+    posed choice whose '?' sits just above a trailing enumerated options block
+    ("...which approach?\n1. A\n2. B") — there the final line is an option, not the
+    question, so the old `endswith('?')` missed it and the session silently stalled
+    (no needs-human ping). Deliberately does NOT treat a ':' lead-in as a question:
+    that would false-fire on result summaries ("Here's what I did:\n1. ...\n2. ...")."""
+    if not txt:
+        return False
+    lines = [ln.strip() for ln in txt.strip().splitlines() if ln.strip()]
+    if not lines:
+        return False
+    if lines[-1].endswith(("?", "？")):
+        return True
+    enum = ("1.", "2.", "3.", "4.", "5.", "6.", "1)", "2)", "3)",
+            "- ", "* ", "・", "①", "②", "③")
+    i = len(lines)
+    while i > 0 and lines[i - 1].startswith(enum):
+        i -= 1                              # skip a trailing enumerated options block
+    return 0 < i < len(lines) and lines[i - 1].endswith(("?", "？"))
 
 
 class TailSignals:
@@ -172,7 +216,7 @@ class TailSignals:
         self.is_tool_result = (role == "user" and last_block == "tool_result")
         self.tool_name = _tool_name(conv) if (conv and self.pending_tool) else None
         txt = _last_text(conv) if (conv and role == "assistant" and last_block == "text") else ""
-        self.asked_question = txt.strip().endswith(("?", "？")) if txt else False
+        self.asked_question = _looks_like_question(txt)
         self.activity_ts = _parse_ts(conv.get("timestamp")) if conv else None
         # human-readable "why" for the board (observability)
         if self.pending_tool:
