@@ -13,7 +13,9 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import budget, driver, notify, progress, relay, roster, route, usage
+from urllib.parse import parse_qs, urlparse
+
+from . import budget, conversation, driver, notify, progress, relay, roster, route, usage
 from .engine import scan_once
 from .store import Store
 
@@ -86,6 +88,23 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
   .out{margin-top:12px;min-height:20px;font-size:12px;white-space:pre-wrap;
     border-radius:7px;padding:9px 11px;border:1px solid var(--line);background:#0d1017}
   .out.ok{border-color:#3ddc8455;color:#9be9c0} .out.err{border-color:#ff5c5c55;color:#ffb3b3}
+  /* detail drawer (click a worker to see its recent exchange) */
+  .row{cursor:pointer} .row:hover{border-color:#2f3a4d}
+  #backdrop{position:fixed;inset:0;background:#0008;opacity:0;pointer-events:none;
+    transition:opacity .18s;z-index:19}
+  #backdrop.open{opacity:1;pointer-events:auto}
+  #drawer{position:fixed;top:0;right:0;height:100%;width:min(560px,92vw);background:var(--card);
+    border-left:1px solid var(--line);box-shadow:-8px 0 40px #0008;transform:translateX(100%);
+    transition:transform .18s ease;z-index:20;display:flex;flex-direction:column}
+  #drawer.open{transform:translateX(0)}
+  .dwhead{padding:15px 18px;border-bottom:1px solid var(--line);display:flex;
+    align-items:center;justify-content:space-between}
+  .dwhead .x{cursor:pointer;color:var(--mut);font-size:16px;background:none;border:0}
+  .dwbody{padding:14px 18px;overflow:auto;flex:1}
+  .turn{margin-bottom:12px}
+  .turn .r{font-size:10px;letter-spacing:1px;color:var(--mut)}
+  .turn.assistant .r{color:#3ddc84}
+  .turn .b{white-space:pre-wrap;word-break:break-word;margin-top:2px;font-size:13px}
 </style></head><body>
 <header><h1>OVERSEER</h1><span class="sub" id="sub">connecting...</span></header>
 <div class="wrap">
@@ -124,6 +143,11 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
   <div class="out" id="op_out">no action yet.</div>
 </div>
 </div>
+<div id="backdrop"></div>
+<div id="drawer">
+  <div class="dwhead"><span id="dwtitle" class="name"></span><button class="x" id="dwclose">close ✕</button></div>
+  <div class="dwbody" id="dwbody"></div>
+</div>
 <script>
 const STATES=__STATES__;
 // HTML-escape any field that can carry content we don't control before it goes
@@ -131,6 +155,7 @@ const STATES=__STATES__;
 // an MCP tool name straight from the transcript) could otherwise inject markup.
 const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>(
   {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]);
+let LAST={};   // session_id -> latest lead, for the detail drawer (set each tick)
 function age(ts){if(!ts)return'-';let d=Math.max(0,Date.now()/1000-ts);
   if(d<60)return Math.floor(d)+'s';if(d<3600)return Math.floor(d/60)+'m';return Math.floor(d/3600)+'h';}
 function fmtTok(n){if(n==null)return'';if(n>=1e6)return(n/1e6).toFixed(1)+'M';
@@ -165,6 +190,7 @@ async function tick(){
     document.getElementById('sub').textContent=
       `${live.length} live · ${need} need you · ${(ins.alerts||[]).length} alerts · ${new Date().toLocaleTimeString()}`;
     renderAlerts(ins.alerts);
+    LAST={};live.forEach(l=>LAST[l.session_id]=l);
     const b=document.getElementById('board');
     if(!live.length){b.innerHTML='<div class="empty">no live sessions</div>';return;}
     b.innerHTML=live.map(l=>{
@@ -173,7 +199,7 @@ async function tick(){
       const alert=(['needs-human','crashed','blocked'].includes(l.derived_state)||
         (x&&['stalled','spiraling'].includes(x.verdict)))?' alert':'';
       const label=esc(l.name||l.domain||'?');
-      return `<div class="row${alert}">
+      return `<div class="row${alert}" data-sid="${esc(l.session_id)}">
         <span class="pill" style="background:${s[1]}">${s[0]}</span>
         <span><span class="name">${label}</span>
           <span class="meta"> · ${esc(l.last_event||'')}</span>${insBits(x)}</span>
@@ -229,6 +255,30 @@ $('x_go').onclick=()=>{const s=$('x_src').value,d=$('x_dst').value;
   if(s===d)return showOut('source and target must differ.',false);
   post('/api/relay',{src:s,dst:d,force:$('x_force').checked},$('x_go'));};
 loadChildren();setInterval(loadChildren,4000);
+
+// ---- detail drawer: click a worker to see its recent exchange ----
+function closeDrawer(){$('drawer').classList.remove('open');$('backdrop').classList.remove('open');}
+function openDrawer(l){
+  $('dwtitle').textContent=(l.name||l.domain||(l.session_id||'').slice(0,8))+
+    (l.derived_state?' · '+l.derived_state:'');
+  const body=$('dwbody');body.innerHTML='<div class="meta">loading...</div>';
+  $('drawer').classList.add('open');$('backdrop').classList.add('open');
+  fetch('/api/conversation?sid='+encodeURIComponent(l.session_id)+'&n=10')
+    .then(r=>r.json()).then(j=>{
+      const t=j.turns||[];
+      if(!t.length){body.innerHTML='<div class="meta">no recent transcript turns.</div>';return;}
+      body.innerHTML=t.map(x=>`<div class="turn ${esc(x.role)}">`+
+        `<div class="r">${esc(x.role)}</div><div class="b">${esc(x.text)}</div></div>`).join('')
+        +`<div class="meta" style="margin-top:8px">to command this worker, use the OPERATE panel.</div>`;
+      body.scrollTop=body.scrollHeight;
+    }).catch(e=>{body.innerHTML='<div class="meta">failed to load — '+esc(''+e)+'</div>';});
+}
+$('board').addEventListener('click',e=>{
+  const row=e.target.closest('.row');if(!row)return;
+  const l=LAST[row.dataset.sid];if(l)openDrawer(l);
+});
+$('dwclose').onclick=closeDrawer;$('backdrop').onclick=closeDrawer;
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer();});
 </script></body></html>"""
 
 
@@ -351,6 +401,18 @@ def make_handler(db_path):
                 finally:
                     s.close()
                 self._send(200, json.dumps({"leads": rows}), "application/json")
+            elif self.path.startswith("/api/conversation"):
+                # A session's recent exchange for the detail drawer — read-only, works
+                # for ANY session (not just owned), so Tom can SEE what a worker is
+                # doing/asking before commanding it. Bounded turns.
+                q = parse_qs(urlparse(self.path).query)
+                sid = (q.get("sid") or [""])[0]
+                try:
+                    n = max(1, min(20, int((q.get("n") or ["8"])[0])))
+                except ValueError:
+                    n = 8
+                turns = conversation.recent_exchange(sid, turns=n) if sid else []
+                self._send(200, json.dumps({"session_id": sid, "turns": turns}), "application/json")
             elif self.path.startswith("/api/insight"):
                 # The monetizable cockpit overlay: tokens + progress (the moat) +
                 # budget + the unified alerts feed. Live (roster.fetch), keyed by

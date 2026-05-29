@@ -434,9 +434,19 @@ struct WorkerView: View {
     @ObservedObject var c: Cockpit
     let name: String
     @State private var directInput = ""
+    @State private var validateResult = ""
+    @State private var validating = false
 
     var body: some View {
         VStack(spacing: 0) {
+            if !validateResult.isEmpty {
+                Text(validateResult)
+                    .font(.caption).fontWeight(.medium)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(6)
+                    .background(validateResult.hasPrefix("✓") ? Color.green.opacity(0.22)
+                                : validateResult.hasPrefix("✗") ? Color.red.opacity(0.22)
+                                : Color.gray.opacity(0.18))
+            }
             ScrollView {
                 Text(c.workerScreen.isEmpty ? "(reading\u{2026})" : cleanedScreen(c.workerScreen))
                     .font(.system(.caption, design: .monospaced))
@@ -456,11 +466,34 @@ struct WorkerView: View {
         .navigationTitle("worker: \(name)")
         .toolbar {
             ToolbarItem {
+                Button { runValidate() } label: { Label("Validate", systemImage: "checkmark.seal") }
+                    .help("Run this worker's tests (validation gate)").disabled(validating)
+            }
+            ToolbarItem {
                 Button { c.killWorker(name) } label: { Label("Kill", systemImage: "xmark.circle") }
                     .help("Stop this worker")
             }
         }
-        .onAppear { c.refreshWorker(name) }
+        .onAppear { c.refreshWorker(name); validateResult = "" }
+    }
+
+    func runValidate() {
+        validating = true
+        validateResult = "validating…"
+        Task.detached {
+            let data = Cockpit.run(["validate", name])
+            var msg = "validate: no result"
+            if let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let st = o["status"] as? String {
+                let cmd = (o["cmd"] as? String).map { " (\($0))" } ?? ""
+                switch st {
+                case "pass": msg = "✓ pass\(cmd)"
+                case "fail": msg = "✗ fail\(cmd) — rc \(o["returncode"] as? Int ?? -1)"
+                default:     msg = "• \(st)" + ((o["hint"] as? String).map { " — \($0)" } ?? "")
+                }
+            }
+            await MainActor.run { self.validateResult = msg; self.validating = false }
+        }
     }
 
     func sendDirect() {

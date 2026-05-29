@@ -19,7 +19,7 @@ from http.server import ThreadingHTTPServer
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from overseer import alerts, budget, driver, progress, relay, route, usage, web  # noqa: E402
+from overseer import alerts, budget, conversation, driver, progress, relay, route, usage, web  # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -245,6 +245,20 @@ page = web.PAGE
 check("XSS: esc() helper present and applied to name/last_event/alert fields",
       "const esc=" in page and "esc(l.last_event" in page and "esc(a.name)" in page
       and "esc(l.name||l.domain" in page)
+check("drawer renders transcript turns ESCAPED (esc(x.text))", "esc(x.text)" in page)
+
+# ---- detail drawer: /api/conversation ----
+conversation.recent_exchange = lambda sid, turns=8: (
+    [{"role": "assistant", "text": "did the thing", "ts": 1.0},
+     {"role": "user", "text": "next please", "ts": 2.0}][:turns] if sid else [])
+st, j = _req(port, "/api/conversation?sid=abc&n=5")
+check("GET /api/conversation -> 200 with turns", st == 200 and len(j.get("turns", [])) == 2 and j["session_id"] == "abc")
+st, j = _req(port, "/api/conversation?sid=abc&n=1")
+check("conversation honors the n turns limit", len(j.get("turns", [])) == 1)
+st, j = _req(port, "/api/conversation")
+check("conversation with no sid -> empty (no crash)", st == 200 and j.get("turns") == [])
+st, j = _req(port, "/api/conversation?sid=abc&n=notanumber")
+check("conversation tolerates a bad n param", st == 200 and len(j.get("turns", [])) == 2)
 
 httpd.shutdown()
 print(f"\n{PASS}/{PASS + FAIL} passed")
