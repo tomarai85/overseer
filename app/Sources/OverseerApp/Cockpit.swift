@@ -151,6 +151,29 @@ final class Cockpit: ObservableObject {
         }
     }
 
+    /// Start a worker from the GUI (spawn waits for it to boot, then optionally
+    /// sends a first task). Selects it so Tom sees its screen immediately.
+    func spawnWorker(name: String, dir: String, task: String) {
+        let n = name.trimmingCharacters(in: .whitespaces)
+        guard !n.isEmpty else { return }
+        let d = dir.trimmingCharacters(in: .whitespaces)
+        let t = task.trimmingCharacters(in: .whitespacesAndNewlines)
+        Task.detached {
+            _ = Self.run(d.isEmpty ? ["spawn", n] : ["spawn", n, d])  // cmd_spawn waits for ready
+            if !t.isEmpty { _ = Self.run(["send", n, t]) }
+            await MainActor.run {
+                self.refresh(); self.selection = .worker(n); self.refreshWorker(n)
+            }
+        }
+    }
+
+    func killWorker(_ name: String) {
+        Task.detached {
+            _ = Self.run(["kill", name])
+            await MainActor.run { self.selection = .parent; self.refresh() }
+        }
+    }
+
     var counts: String {
         var c: [String: Int] = [:]
         for l in leads { c[l.state, default: 0] += 1 }
@@ -186,6 +209,7 @@ struct CockpitView: View {
 
 struct Sidebar: View {
     @ObservedObject var c: Cockpit
+    @State private var showNew = false
 
     var body: some View {
         List {
@@ -193,9 +217,9 @@ struct Sidebar: View {
                 row(title: "Fleet Parent", glyphStr: "🧠", color: .blue,
                     selected: c.selection == .parent) { c.selection = .parent }
             }
-            Section("Workers you drive") {
+            Section {
                 if c.workers.isEmpty {
-                    Text("none yet — ask the parent to start one")
+                    Text("none yet — ask the parent, or tap +")
                         .font(.caption).foregroundColor(.secondary)
                 } else {
                     ForEach(c.workers, id: \.self) { w in
@@ -204,6 +228,13 @@ struct Sidebar: View {
                             c.selection = .worker(w); c.refreshWorker(w)
                         }
                     }
+                }
+            } header: {
+                HStack {
+                    Text("Workers you drive")
+                    Spacer()
+                    Button { showNew = true } label: { Image(systemName: "plus.circle") }
+                        .buttonStyle(.plain).help("Start a new worker")
                 }
             }
             Section("Fleet (monitored, read-only)") {
@@ -233,6 +264,7 @@ struct Sidebar: View {
             }
             .padding(6).background(.thinMaterial)
         }
+        .sheet(isPresented: $showNew) { NewWorkerSheet(c: c, show: $showNew) }
     }
 
     @ViewBuilder
@@ -329,6 +361,12 @@ struct WorkerView: View {
             }.padding(10)
         }
         .navigationTitle("worker: \(name)")
+        .toolbar {
+            ToolbarItem {
+                Button { c.killWorker(name) } label: { Label("Kill", systemImage: "xmark.circle") }
+                    .help("Stop this worker")
+            }
+        }
         .onAppear { c.refreshWorker(name) }
     }
 
@@ -340,5 +378,35 @@ struct WorkerView: View {
             _ = Cockpit.run(["send", name, t])
             await MainActor.run { c.refreshWorker(name) }
         }
+    }
+}
+
+struct NewWorkerSheet: View {
+    @ObservedObject var c: Cockpit
+    @Binding var show: Bool
+    @State private var name = ""
+    @State private var dir = NSHomeDirectory()
+    @State private var task = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Start a worker").font(.headline)
+            TextField("name (e.g. helix)", text: $name).textFieldStyle(.roundedBorder)
+            TextField("working dir", text: $dir).textFieldStyle(.roundedBorder)
+            TextField("first task (optional)", text: $task, axis: .vertical)
+                .lineLimit(1...4).textFieldStyle(.roundedBorder)
+            Text("Spawns a NEW child Claude in that dir. Never touches your own sessions.")
+                .font(.caption2).foregroundColor(.secondary)
+            HStack {
+                Spacer()
+                Button("Cancel") { show = false }
+                Button("Start") {
+                    c.spawnWorker(name: name, dir: dir, task: task); show = false
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(20).frame(width: 440)
     }
 }
