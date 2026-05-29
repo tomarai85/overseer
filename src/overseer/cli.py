@@ -264,6 +264,44 @@ def cmd_kill(args: list[str]) -> int:
     return 0
 
 
+def cmd_tell(args: list[str]) -> int:
+    """`overseer tell <name> <text...> [--force]` — quiescence-guarded command to
+    an owned child (refuses to type into a working child unless --force)."""
+    from . import relay
+    force = "--force" in args
+    args = [a for a in args if a != "--force"]
+    if len(args) < 2:
+        print("usage: overseer tell <name> <text...> [--force]", file=sys.stderr)
+        return 2
+    name, text = args[0], " ".join(args[1:])
+    try:
+        r = relay.tell(name, text, force=force)
+    except relay.RelayError as e:
+        print(f"tell refused: {e}", file=sys.stderr)
+        return 1
+    print(f"told '{name}' (was {r['state_before']}): {text}")
+    return 0
+
+
+def cmd_relay(args: list[str]) -> int:
+    """`overseer relay <src> <dst> [--force]` — pipe one owned child's latest output
+    into another owned child as input (bot-to-bot; target must be quiescent)."""
+    from . import relay
+    force = "--force" in args
+    args = [a for a in args if a != "--force"]
+    if len(args) < 2:
+        print("usage: overseer relay <src> <dst> [--force]", file=sys.stderr)
+        return 2
+    src, dst = args[0], args[1]
+    try:
+        r = relay.relay(src, dst, force=force)
+    except relay.RelayError as e:
+        print(f"relay refused: {e}", file=sys.stderr)
+        return 1
+    print(f"relayed '{src}' -> '{dst}' ({r['chars']} chars; target was {r['target_state_before']})")
+    return 0
+
+
 def cmd_parent(args: list[str]) -> int:
     """`overseer parent-send <msg> | parent-history | parent-reset` — drive the
     fleet parent headlessly (used by the GUI; also usable from the shell)."""
@@ -330,11 +368,12 @@ def main(argv: list[str] | None = None) -> int:
             return web.serve(port=port)
         if cmd == "restart":
             return cmd_restart(store, argv[1:])
-        if cmd in ("spawn", "send", "read", "children", "kill"):
-            store.close()  # driver commands don't touch the db
+        if cmd in ("spawn", "send", "read", "children", "kill", "tell", "relay"):
+            store.close()  # driver / relay commands don't touch the db
             return {
                 "spawn": cmd_spawn, "send": cmd_send, "read": cmd_read,
                 "children": cmd_children, "kill": cmd_kill,
+                "tell": cmd_tell, "relay": cmd_relay,
             }[cmd](argv[1:])
         if cmd in ("parent-send", "parent-history", "parent-reset"):
             store.close()
