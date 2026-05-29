@@ -48,6 +48,31 @@ overseer relay builder reviewer               # reviewer reads builder's latest 
 overseer autopilot helix "continue; if blocked, summarize and stop" --max 5
 ```
 
+## From the dashboard (GUI, not just the CLI)
+
+`overseer serve` now *drives* the fleet, not just watches it — the three pains
+above are solvable from the browser:
+
+- an **OPERATE panel** under the board: a *command* box (pick an owned worker,
+  type a command + optional context, Send), a *route* box (type an instruction,
+  Overseer picks the worker), and a *relay* src->dst control. Every button posts to
+  a guarded endpoint (`/api/tell`, `/api/route`, `/api/relay`) that inherits the
+  exact same boundary as the CLI: owned-only, target must be quiescent unless you
+  tick force, every action audited. A refusal (not owned / not idle / ambiguous
+  route) comes back as a readable reason, not a failure.
+- `/api/children` lists only OWNED workers + each one's live quiescence, so the
+  target dropdowns can't even offer one of Tom's own sessions.
+
+The board also surfaces the **moat overlay** (`/api/insight`): a "truly needs you"
+alerts strip (stalled / spiraling / over-budget, with the why) above the board, and
+per-worker token burn + progress verdict + budget % on each row. `build_insight()`
+runs each aggregator once per poll — it must NOT call `alerts.attention()` on top of
+`progress.fleet_progress()`, because progress mutates its snapshot (consuming the
+token delta), so a second pass corrupts the verdict; the alert rules are rebuilt
+inline and kept in sync with `alerts.attention` by a drift-guard test.
+
+The server stays bound to `127.0.0.1` — this is a local-only action surface.
+
 ## Tests & live verification
 
 `tests/test_relay.py` (20) · `tests/test_route.py` (11) · `tests/test_autopilot.py`
@@ -66,6 +91,12 @@ tests missed):
    pushes the `❯` above the status footer;
 5. `autopilot` re-nudges an idle worker each time it goes quiescent and stops at the
    cap (live: two nudges, then `stopped: max_nudges`).
+6. the **GUI operate path** end to end: a real spawned owned child, driven via
+   `POST /api/tell` through the live dashboard server — the command landed in the
+   real tmux pane and the relay audit recorded the owned+quiescent delivery.
+7. **`/api/insight`** served the real fleet (7 sessions, real token counts, correct
+   progressing/idle verdicts), and `build_insight`'s inline alerts match
+   `alerts.attention` (drift guard).
 
 Hardened against an Opus adversarial review (ownership boundary sound; fixed: the
 multi-line submit bug, marker-as-data via region-scanned working/permission markers,
