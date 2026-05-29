@@ -73,6 +73,23 @@ def run():
     en = budget.enforce_fleet(dry_run=True)
     res.append(("enforce flags the breach (dry-run, no owned to pause)",
                 en["breached"] is True and en["paused"] == []))
+
+    # ---- pause_owned_over correlates owned children by cwd, NOT by name ----
+    # An owned child whose ov- name differs from its cwd basename must still match
+    # (the old name-substring match silently missed it -> auto-pause never fired).
+    driver._load_registry = lambda: {"w7": {"cwd": "/work/project-alpha"}}
+    po_leads = [roster.Lead(session_id="sX", name=None, cwd="/work/project-alpha")]
+    roster.fetch = lambda: po_leads
+    budget.set_budget("default", 100)
+    usage.session_usage = lambda sid: {"output": 500, "input": 0, "cache_read": 0,
+                                       "cache_write": 0, "messages": 1}   # 500/100 -> over
+    acted = budget.pause_owned_over(dry_run=True)
+    res.append(("pause_owned_over joins owned child by cwd (name != cwd basename)",
+                len(acted) == 1 and acted[0]["child"] == "w7" and acted[0]["paused"] is False))
+    # a lead whose cwd matches NO registry entry is never paused (Tom's own sessions)
+    roster.fetch = lambda: [roster.Lead(session_id="sY", name=None, cwd="/somewhere/else")]
+    res.append(("pause_owned_over ignores a non-owned (unmatched cwd) session",
+                budget.pause_owned_over(dry_run=True) == []))
     return res
 
 

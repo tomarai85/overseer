@@ -90,6 +90,33 @@ def status(leads=None, rates: dict | None = None) -> dict:
                         if breached else "all sessions within budget")}
 
 
+def _owned_by_session(leads) -> dict:
+    """session_id -> owned ov- child name, correlated by realpath(cwd).
+
+    The registry has no session_id (the child's id only appears in `claude agents`
+    seconds after spawn) and a lead has no ov- name, but both carry a cwd — so the
+    cwd is the join key (same correlation the web/live cockpit use). The old code
+    matched the ov- name against the lead's display name, which for an owned child is
+    its cwd (name is None on the roster) — so it silently missed every child whose
+    ov- name wasn't its cwd basename, and the auto-pause never fired."""
+    import os
+
+    def rp(p):
+        try:
+            return os.path.realpath(p) if p else None
+        except OSError:
+            return p
+    registry = driver._load_registry()
+    cwd_to_child = {rp(meta.get("cwd")): name
+                    for name, meta in registry.items() if meta.get("cwd")}
+    out = {}
+    for l in leads:
+        child = cwd_to_child.get(rp(l.cwd))
+        if child:
+            out[l.session_id] = child
+    return out
+
+
 def pause_owned_over(dry_run: bool = True) -> list[dict]:
     """Find OWNED children over budget; if not dry_run, send each a guarded stop
     message (driver.send refuses non-owned, so Tom's own sessions can never be hit).
@@ -99,14 +126,12 @@ def pause_owned_over(dry_run: bool = True) -> list[dict]:
         leads = roster.fetch()
     except roster.RosterError:
         leads = []
-    owned = set(driver.list_children())
-    by_name = {l.name: l for l in leads}
+    sid_to_child = _owned_by_session(leads)
     acted = []
     for r in status(leads=leads)["sessions"]:
         if r["state"] != "over":
             continue
-        # only OWNED children, matched by the ov- child name
-        cand = next((n for n in owned if n == r["name"] or r["name"].endswith(n)), None)
+        cand = sid_to_child.get(r["session_id"])     # OWNED children only, joined by cwd
         if not cand:
             continue
         action = {"child": cand, "pct": r["pct"], "paused": False}
