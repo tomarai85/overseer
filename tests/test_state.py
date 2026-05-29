@@ -182,6 +182,26 @@ def run(tmp: Path) -> list[tuple[str, bool, str]]:
     results = []
     for name, got, want in cases:
         results.append((name, got == want, f"got={got} want={want}"))
+
+    # ---- session_title: the human-readable label that tells same-cwd sessions apart ----
+    def t(name, got, want):
+        results.append((name, got == want, f"got={got!r} want={want!r}"))
+
+    t("title: picks the latest ai-title",
+      state.session_title([{"type": "ai-title", "aiTitle": "old"}, _user(),
+                           {"type": "ai-title", "aiTitle": "Fresh Title"}]),
+      "Fresh Title")
+    t("title: none present -> None (falls back to domain)",
+      state.session_title([_user(), _assistant_text("done")]), None)
+    t("title: blank / non-string aiTitle ignored",
+      state.session_title([{"type": "ai-title", "aiTitle": "  "},
+                           {"type": "ai-title", "aiTitle": 123}]), None)
+    # derive() must carry the title through (store/leads use it as the display label)
+    _write_transcript(tmp, "titled", [_user(), _assistant_text("hi"),
+                                      {"type": "ai-title", "aiTitle": "My Session"}])
+    state.PROJECTS_DIR = tmp
+    lead = roster.Lead(session_id="titled", pid=live, raw_status="idle")
+    t("derive() returns the title for the label", state.derive(lead).get("title"), "My Session")
     return results
 
 

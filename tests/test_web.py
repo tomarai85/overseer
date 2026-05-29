@@ -243,8 +243,12 @@ check("body cap: Content-Length over limit -> 413",
 # XSS: tainted fields are escaped before innerHTML
 page = web.PAGE
 check("XSS: esc() helper present and applied to name/last_event/alert fields",
-      "const esc=" in page and "esc(l.last_event" in page and "esc(a.name)" in page
-      and "esc(l.name||l.domain" in page)
+      "const esc=" in page and "esc(l.last_event" in page
+      # session labels now resolve via leadLabel() (prefers the ai-title) — it returns
+      # UNescaped values (name/title/domain, title is transcript-derived = tainted), so
+      # every sink must keep it inside esc(). Guard both the alert chip and the board row.
+      and "esc(leadLabel(LAST[a.session_id])||a.name)" in page
+      and "esc(leadLabel(l)" in page)
 check("drawer renders transcript turns ESCAPED (esc(x.text))", "esc(x.text)" in page)
 check("alert chips are clickable -> open the drawer for that session",
       'data-sid="${esc(a.session_id)}"' in page and "$('alerts').addEventListener" in page)

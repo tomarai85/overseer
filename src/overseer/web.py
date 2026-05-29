@@ -172,12 +172,17 @@ function insBits(x){
     o+=` · <span class="${c}">${Math.round(x.budget_pct*100)}% budget</span>`;}
   return o?`<span class="meta ins">${o}</span>`:'';
 }
+// One label for a session, preferring the human-readable ai-title over the
+// shared cwd slug so a fleet of same-cwd sessions is distinguishable.
+function leadLabel(l){return (l&&(l.name||l.title||l.domain))||'';}
 function renderAlerts(alerts){
   const el=document.getElementById('alerts');
   if(!alerts||!alerts.length){el.innerHTML='';return;}
+  // The alert's own name comes from the token-snapshot path (cwd-only); resolve a
+  // better label from the leads cache so an alert names WHICH session needs you.
   el.innerHTML=alerts.map(a=>`<div class="alert-chip ${esc(a.kind)}" data-sid="${esc(a.session_id)}">
     <span class="k">${esc((a.kind||'').toUpperCase().replace('-',' '))}</span>
-    <span class="n">${esc(a.name)}</span><span class="w">${esc(a.why||'')}</span></div>`).join('');
+    <span class="n">${esc(leadLabel(LAST[a.session_id])||a.name)}</span><span class="w">${esc(a.why||'')}</span></div>`).join('');
 }
 async function tick(){
   try{
@@ -190,8 +195,8 @@ async function tick(){
     const need=live.filter(l=>['needs-human','crashed','blocked'].includes(l.derived_state)).length;
     document.getElementById('sub').textContent=
       `${live.length} live · ${need} need you · ${(ins.alerts||[]).length} alerts · ${new Date().toLocaleTimeString()}`;
-    renderAlerts(ins.alerts);
     LAST={};live.forEach(l=>LAST[l.session_id]=l);
+    renderAlerts(ins.alerts);   // after LAST so alerts can resolve session labels
     const b=document.getElementById('board');
     if(!live.length){b.innerHTML='<div class="empty">no live sessions</div>';return;}
     b.innerHTML=live.map(l=>{
@@ -199,7 +204,7 @@ async function tick(){
       const x=bs[l.session_id];
       const alert=(['needs-human','crashed','blocked'].includes(l.derived_state)||
         (x&&['stalled','spiraling'].includes(x.verdict)))?' alert':'';
-      const label=esc(l.name||l.domain||'?');
+      const label=esc(leadLabel(l)||'?');
       return `<div class="row${alert}" data-sid="${esc(l.session_id)}">
         <span class="pill" style="background:${s[1]}">${s[0]}</span>
         <span><span class="name">${label}</span>
@@ -260,7 +265,7 @@ loadChildren();setInterval(loadChildren,4000);
 // ---- detail drawer: click a worker to see its recent exchange ----
 function closeDrawer(){$('drawer').classList.remove('open');$('backdrop').classList.remove('open');}
 function openDrawer(l){
-  $('dwtitle').textContent=(l.name||l.domain||(l.session_id||'').slice(0,8))+
+  $('dwtitle').textContent=(l.name||l.title||l.domain||(l.session_id||'').slice(0,8))+
     (l.derived_state?' · '+l.derived_state:'');
   const body=$('dwbody');body.innerHTML='<div class="meta">loading...</div>';
   $('drawer').classList.add('open');$('backdrop').classList.add('open');

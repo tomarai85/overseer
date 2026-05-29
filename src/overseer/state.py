@@ -175,6 +175,21 @@ def last_conversational(records: list[dict[str, Any]]) -> dict[str, Any] | None:
     return None
 
 
+def session_title(records: list[dict[str, Any]]) -> str | None:
+    """The session's latest Claude-generated title. Claude Code writes periodic
+    `{type:'ai-title', aiTitle:...}` records and the freshest sits within a few
+    lines of the tail, so reading it off the records we already have is free. This
+    is what lets a fleet of same-cwd sessions be told apart: without it every
+    hand-started session in ~ collapses to the shared 'domain' slug. Returns None
+    when the session has no title yet (callers fall back to the slug)."""
+    for rec in reversed(records):
+        if rec.get("type") == "ai-title":
+            t = rec.get("aiTitle")
+            if isinstance(t, str) and t.strip():
+                return t.strip()
+    return None
+
+
 def _looks_like_question(txt: str) -> bool:
     """The turn ends by asking the human. Beyond a strict trailing '?', also catch a
     posed choice whose '?' sits just above a trailing enumerated options block
@@ -243,6 +258,7 @@ def derive(lead: Any) -> dict[str, Any]:
     records = _tail_records(transcript) if transcript else []
     conv = last_conversational(records)
     sig = TailSignals(conv)
+    title = session_title(records)  # human-readable label; None falls back to domain
 
     # Activity age from the record's OWN timestamp when present (true activity),
     # else fall back to the file mtime. This is what makes staleness trustworthy:
@@ -263,7 +279,7 @@ def derive(lead: Any) -> dict[str, Any]:
             state = "crashed" if phase in lease.ACTIVE_PHASES else "done"
         else:
             state = lease.PHASE_TO_STATE.get(phase, "working")
-        return {"domain": domain, "derived_state": state,
+        return {"domain": domain, "title": title, "derived_state": state,
                 "last_event": f"lease:{phase}", "last_mtime": activity_ts}
 
     # ---- fallback: content-aware transcript heuristic (un-instrumented sessions) ----
@@ -306,5 +322,5 @@ def derive(lead: Any) -> dict[str, Any]:
         # null status + no usable conversational record: fall back on freshness
         state = "working" if (age is not None and age < 60) else "waiting"
 
-    return {"domain": domain, "derived_state": state,
+    return {"domain": domain, "title": title, "derived_state": state,
             "last_event": sig.last_event, "last_mtime": activity_ts}

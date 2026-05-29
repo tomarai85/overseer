@@ -53,7 +53,7 @@ def cmd_status(store: Store) -> int:
     print("  " + "-" * 78)
     for r in rows:
         glyph = _STATE_GLYPH.get(r["derived_state"], (r["derived_state"], 9))[0]
-        label = r["name"] or (r["domain"] or "?")
+        label = r["name"] or r["title"] or (r["domain"] or "?")
         if len(label) > 33:
             label = label[:30] + "..."
         print(f"  {glyph:<14} {label:<34} {_age(r['last_mtime']):<9} {r['session_id'][:8]}")
@@ -146,7 +146,7 @@ def cmd_leads(store: Store) -> int:
     rows.sort(key=lambda r: _STATE_GLYPH.get(r["derived_state"], ("", 9))[1])
     out = [{
         "session_id": r["session_id"],
-        "name": r["name"] or (r["domain"] or "?"),
+        "name": r["name"] or r["title"] or (r["domain"] or "?"),
         "state": r["derived_state"],
         "age": _age(r["last_mtime"]),
     } for r in rows]

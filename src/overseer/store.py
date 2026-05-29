@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS leads (
     name          TEXT,
     cwd           TEXT,
     domain        TEXT,
+    title         TEXT,
     raw_status    TEXT,
     derived_state TEXT,
     last_event    TEXT,
@@ -48,6 +49,11 @@ class Store:
         self.conn = sqlite3.connect(str(self.db_path), timeout=10.0)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(_SCHEMA)
+        # migrate DBs created before a column existed (CREATE TABLE IF NOT EXISTS
+        # is a no-op on an existing table, so new columns must be added explicitly).
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(leads)").fetchall()}
+        if "title" not in cols:
+            self.conn.execute("ALTER TABLE leads ADD COLUMN title TEXT")
         self.conn.commit()
 
     def close(self) -> None:
@@ -66,21 +72,21 @@ class Store:
         first_seen = existing["first_seen"] if existing else now
         self.conn.execute(
             """
-            INSERT INTO leads (session_id, pid, name, cwd, domain, raw_status,
+            INSERT INTO leads (session_id, pid, name, cwd, domain, title, raw_status,
                                derived_state, last_event, last_mtime, started_at,
                                restart_policy, first_seen, updated_at)
-            VALUES (:session_id, :pid, :name, :cwd, :domain, :raw_status,
+            VALUES (:session_id, :pid, :name, :cwd, :domain, :title, :raw_status,
                     :derived_state, :last_event, :last_mtime, :started_at,
                     COALESCE((SELECT restart_policy FROM leads WHERE session_id = :session_id), 'manual'),
                     :first_seen, :updated_at)
             ON CONFLICT(session_id) DO UPDATE SET
                 pid=excluded.pid, name=excluded.name, cwd=excluded.cwd,
-                domain=excluded.domain, raw_status=excluded.raw_status,
+                domain=excluded.domain, title=excluded.title, raw_status=excluded.raw_status,
                 derived_state=excluded.derived_state, last_event=excluded.last_event,
                 last_mtime=excluded.last_mtime, started_at=excluded.started_at,
                 updated_at=excluded.updated_at
             """,
-            {**row, "first_seen": first_seen, "updated_at": now},
+            {**row, "title": row.get("title"), "first_seen": first_seen, "updated_at": now},
         )
         self.conn.commit()
         return prev_state
