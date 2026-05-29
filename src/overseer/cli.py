@@ -302,6 +302,22 @@ def cmd_relay(args: list[str]) -> int:
     return 0
 
 
+def cmd_route(args: list[str]) -> int:
+    """`overseer route <instruction...> [--go] [--force]` — classify which owned
+    worker an instruction belongs to and (with --go) deliver it via tell. Dry-run
+    by default; an ambiguous instruction is refused, never guessed."""
+    from . import route
+    go = "--go" in args
+    force = "--force" in args
+    args = [a for a in args if a not in ("--go", "--force")]
+    if not args:
+        print("usage: overseer route <instruction...> [--go] [--force]", file=sys.stderr)
+        return 2
+    plan = route.route(" ".join(args), go=go, force=force)
+    print(json.dumps(plan, ensure_ascii=False, indent=2))
+    return 0 if (plan.get("routed") or not go) else 1
+
+
 def cmd_parent(args: list[str]) -> int:
     """`overseer parent-send <msg> | parent-history | parent-reset` — drive the
     fleet parent headlessly (used by the GUI; also usable from the shell)."""
@@ -368,12 +384,12 @@ def main(argv: list[str] | None = None) -> int:
             return web.serve(port=port)
         if cmd == "restart":
             return cmd_restart(store, argv[1:])
-        if cmd in ("spawn", "send", "read", "children", "kill", "tell", "relay"):
-            store.close()  # driver / relay commands don't touch the db
+        if cmd in ("spawn", "send", "read", "children", "kill", "tell", "relay", "route"):
+            store.close()  # driver / relay / route commands don't touch the db
             return {
                 "spawn": cmd_spawn, "send": cmd_send, "read": cmd_read,
                 "children": cmd_children, "kill": cmd_kill,
-                "tell": cmd_tell, "relay": cmd_relay,
+                "tell": cmd_tell, "relay": cmd_relay, "route": cmd_route,
             }[cmd](argv[1:])
         if cmd in ("parent-send", "parent-history", "parent-reset"):
             store.close()
