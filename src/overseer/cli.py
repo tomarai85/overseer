@@ -95,6 +95,20 @@ def cmd_alerts(_args: list[str]) -> int:
     return 0
 
 
+def cmd_validate(args: list[str]) -> int:
+    """`overseer validate [name] | set <name> <cmd>` — run a child's tests -> pass/fail."""
+    from . import validate
+    if args and args[0] == "set":
+        if len(args) < 3:
+            print("usage: overseer validate set <name> <test command>", file=sys.stderr)
+            return 2
+        validate.set_command(args[1], " ".join(args[2:]))
+        print(json.dumps({"set": args[1], "cmd": " ".join(args[2:])}))
+        return 0
+    print(json.dumps(validate.validate(args[0]) if args else validate.validate_all()))
+    return 0
+
+
 def cmd_guard(args: list[str]) -> int:
     """`overseer guard [interval]` — always-on watcher: fires a notification when a
     session truly needs you (stalled/spiraling/over-budget/needs-human/crashed)."""
@@ -467,6 +481,9 @@ def main(argv: list[str] | None = None) -> int:
         if cmd == "alerts":
             store.close()
             return cmd_alerts(argv[1:])
+        if cmd == "validate":
+            store.close()
+            return cmd_validate(argv[1:])
         if cmd == "guard":
             store.close()
             return cmd_guard(argv[1:])
