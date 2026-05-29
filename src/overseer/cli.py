@@ -261,6 +261,33 @@ def cmd_kill(args: list[str]) -> int:
     return 0
 
 
+def cmd_parent(args: list[str]) -> int:
+    """`overseer parent-send <msg> | parent-history | parent-reset` — drive the
+    fleet parent headlessly (used by the GUI; also usable from the shell)."""
+    from . import parent
+    sub = args[0] if args else "history"
+    if sub == "send":
+        msg = " ".join(args[1:])
+        if not msg:
+            print("usage: overseer parent-send <message>", file=sys.stderr)
+            return 2
+        try:
+            print(json.dumps(parent.send(msg)))
+        except parent.ParentError as e:
+            print(json.dumps({"error": str(e)}))
+            return 1
+        return 0
+    if sub == "history":
+        print(json.dumps(parent.history()))
+        return 0
+    if sub == "reset":
+        parent.reset()
+        print(json.dumps({"reset": True}))
+        return 0
+    print(f"unknown parent subcommand: {sub}", file=sys.stderr)
+    return 2
+
+
 def cmd_daemon(store: Store, interval: float = 5.0) -> int:
     print(f"overseer daemon: polling every {interval}s (Ctrl-C to stop)", file=sys.stderr)
     while True:
@@ -303,6 +330,12 @@ def main(argv: list[str] | None = None) -> int:
                 "spawn": cmd_spawn, "send": cmd_send, "read": cmd_read,
                 "children": cmd_children, "kill": cmd_kill,
             }[cmd](argv[1:])
+        if cmd in ("parent-send", "parent-history", "parent-reset"):
+            store.close()
+            return cmd_parent([cmd.split("-", 1)[1]] + argv[1:])
+        if cmd == "parent":
+            store.close()
+            return cmd_parent(argv[1:])
         if cmd == "doctor":
             return cmd_doctor(store)
         if cmd == "demo":
