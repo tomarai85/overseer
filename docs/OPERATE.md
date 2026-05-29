@@ -50,7 +50,9 @@ overseer autopilot helix "continue; if blocked, summarize and stop" --max 5
 
 ## Tests
 
-`tests/test_relay.py` (17) · `tests/test_route.py` (11) · `tests/test_autopilot.py`
+`tests/test_relay.py` (19) · `tests/test_route.py` (11) · `tests/test_autopilot.py`
 (10) — all mock tmux/pane I/O. The operate path is also **live-verified** end to
-end (spawn → quiescence-gated unforced `tell` → keystrokes land), per the build's
-"tests pass ≠ it works" rule.
+end against real spawned workers: (1) a quiescence-gated *unforced* `tell` lands
+its keystrokes on an idle child; (2) **bot-to-bot `relay`** carries one worker's
+payload into another through the quiescence gate (unforced, target was `waiting`).
+Per the build's "tests pass ≠ it works" rule.
