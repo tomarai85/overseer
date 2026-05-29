@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Overseer NOTIFY daemon — always-on 24/7 alerts even when the cockpit app is closed.
+  Runs `overseer daemon` (the poll loop wired to notify.on_transition), so you get a
+  native notification the moment any session enters needs-you / crashed / blocked.
+
+  Install (opt-in — Overseer never loads this for you):
+    ./bin/install-daemon.sh
+  Stop:
+    launchctl unload ~/Library/LaunchAgents/com.overseer.daemon.plist
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.overseer.daemon</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__OVERSEER_HOME__/bin/overseer</string>
+        <string>daemon</string>
+        <string>5</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__OVERSEER_HOME__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>OVERSEER_NOTIFY</key>
+        <string>1</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>__OVERSEER_HOME__/data/daemon.log</string>
+    <key>StandardErrorPath</key>
+    <string>__OVERSEER_HOME__/data/daemon.log</string>
+</dict>
+</plist>
