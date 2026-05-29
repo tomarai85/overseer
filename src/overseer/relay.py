@@ -39,7 +39,12 @@ SAFE_TARGET = {"waiting"}
 # robust: 'working' shows an interrupt/spinner marker; a permission prompt shows its
 # own markers; otherwise the idle input chevron means the turn is done = safe to type.
 READY_PROMPT = "❯"
-_WORKING_MARKERS = ("esc to interrupt", "✻", "Cogitat", "Thinking", "⏵⏵", "tokens/s")
+# 'esc to interrupt' is the definitive working signal — shown only during active
+# generation / tool execution, absent at the idle prompt (verified on a live child
+# 2026-05-29). '✻'/'Cogitating' are the working spinner. NOTE: '⏵⏵' is NOT a working
+# marker — it is the always-present "⏵⏵ bypass permissions" status line (an earlier
+# guess wrongly included it, which read every idle child as 'working' forever).
+_WORKING_MARKERS = ("esc to interrupt", "✻", "Cogitating")
 _PERMISSION_MARKERS = ("Do you want to proceed", "Do you want to make this edit",
                        "❯ 1.", "1. Yes", "Allow this", "approve?")
 
