@@ -26,7 +26,7 @@ from __future__ import annotations
 import json
 import time
 
-from . import driver, supervisor
+from . import driver
 
 RELAY_AUDIT = driver.DATA / "relay-audit.log"
 # target states that accept an unforced message (quiescent == safe to type into)
