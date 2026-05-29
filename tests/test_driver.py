@@ -19,6 +19,15 @@ from overseer import driver  # noqa: E402
 def run():
     res = []
 
+    # isolate the owned-children registry + audit log to a temp dir
+    import json as _json
+    import tempfile
+    _tmp = Path(tempfile.mkdtemp())
+    driver.DATA = _tmp
+    driver.REGISTRY = _tmp / "children.json"
+    driver.AUDIT = _tmp / "audit.log"
+    driver.REGISTRY.write_text(_json.dumps({"worker1": {"tmux": "ov-worker1"}}))  # owned, for send tests
+
     # --- session_name always ends up ov-prefixed, exactly once ---
     res.append(("name gets prefix", driver.session_name("foo") == "ov-foo"))
     res.append(("prefixed name unchanged", driver.session_name("ov-foo") == "ov-foo"))
@@ -55,6 +64,13 @@ def run():
         except driver.DriverError:
             res.append(("send refuses empty", True))
 
+        # fail-closed boundary: refuse a target Overseer does not own (Codex #2)
+        try:
+            driver.send("not_owned_xyz", "hi")
+            res.append(("send refuses UNOWNED target (boundary enforced in CLI)", False))
+        except driver.DriverError:
+            res.append(("send refuses UNOWNED target (boundary enforced in CLI)", True))
+
         # spawn refuses an existing child (no silent clobber)
         driver.exists = lambda name: True
         try:
@@ -71,6 +87,7 @@ def run():
         res.append(("spawn creates session", any(c[0] == "new-session" for c in calls)))
         res.append(("spawn launches claude in cwd",
                     any("cd /tmp && claude" in " ".join(c) for c in calls)))
+        res.append(("spawn registers the child as owned", driver.is_owned("fresh")))
 
         # never touches a non-ov session
         driver.exists = lambda name: True

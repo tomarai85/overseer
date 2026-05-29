@@ -16,16 +16,56 @@ Design rules:
 """
 from __future__ import annotations
 
+import json
+import os
 import subprocess
 import time
+from pathlib import Path
 
 PREFIX = "ov-"            # our sessions are ov-<name>; we never touch others
 READY_PROMPT = "❯"   # the claude TUI input chevron ❯ = booted + idle
 TRUST_MARKERS = ("Do you trust the files", "trust the files in this folder")
 
+# Ownership boundary (Codex 2026-05-29): "parent told not to touch user sessions"
+# is NOT a boundary — a model can drift or be prompt-injected. The real boundary
+# is enforced HERE: send/kill REFUSE any target not in the owned-children
+# registry, and every spawn/send/kill is appended to an audit log. So even a
+# misbehaving parent cannot drive a session Overseer did not itself spawn.
+DATA = Path(os.environ.get("OVERSEER_DATA", str(Path(__file__).resolve().parents[2] / "data")))
+REGISTRY = DATA / "children.json"
+AUDIT = DATA / "driver-audit.log"
+
 
 class DriverError(RuntimeError):
     pass
+
+
+def _plain(name: str) -> str:
+    return name[len(PREFIX):] if name.startswith(PREFIX) else name
+
+
+def _load_registry() -> dict:
+    try:
+        return json.loads(REGISTRY.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_registry(reg: dict) -> None:
+    DATA.mkdir(parents=True, exist_ok=True)
+    REGISTRY.write_text(json.dumps(reg, indent=2))
+
+
+def _audit(action: str, target: str, detail: str = "") -> None:
+    DATA.mkdir(parents=True, exist_ok=True)
+    with open(AUDIT, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"ts": time.time(), "action": action,
+                            "target": target, "detail": detail[:200]}) + "\n")
+
+
+def is_owned(name: str) -> bool:
+    """True only if Overseer itself spawned this child (in the registry)."""
+    return _plain(name) in _load_registry()
 
 
 def _tmux(*args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -58,6 +98,10 @@ def spawn(name: str, cwd: str | None = None, claude_cmd: str = "claude",
     _tmux("new-session", "-d", "-s", sn, "-x", str(width), "-y", str(height))
     launch = f"cd {cwd} && {claude_cmd}" if cwd else claude_cmd
     _tmux("send-keys", "-t", sn, launch, "Enter")
+    reg = _load_registry()
+    reg[_plain(name)] = {"tmux": sn, "cwd": cwd, "spawned_at": time.time()}
+    _save_registry(reg)
+    _audit("spawn", _plain(name), cwd or "")
     return sn
 
 
@@ -98,6 +142,9 @@ def send(name: str, text: str, settle: float = 0.4) -> None:
     Text is sent literally; Enter is a separate keystroke after `settle` so the
     TUI registers the full line before submission.
     """
+    if not is_owned(name):
+        _audit("send-REFUSED", _plain(name), "not an owned child")
+        raise DriverError(f"refusing to send to '{name}': not an Overseer-owned child")
     sn = session_name(name)
     if not exists(sn):
         raise DriverError(f"no child '{name}'")
@@ -106,19 +153,27 @@ def send(name: str, text: str, settle: float = 0.4) -> None:
     _tmux("send-keys", "-t", sn, "-l", text)
     time.sleep(settle)
     _tmux("send-keys", "-t", sn, "Enter")
+    _audit("send", _plain(name), text)
 
 
 def list_children() -> list[str]:
-    """Names (without prefix) of all driver-managed children currently alive."""
+    """Owned children that are still alive (registry ∩ live tmux). Strict: an
+    unregistered ov- session is NOT listed (and send/kill would refuse it)."""
+    live = set()
     r = _tmux("list-sessions", "-F", "#{session_name}", check=False)
-    if r.returncode != 0:
-        return []
-    return [s[len(PREFIX):] for s in r.stdout.split() if s.startswith(PREFIX)]
+    if r.returncode == 0:
+        live = {s[len(PREFIX):] for s in r.stdout.split() if s.startswith(PREFIX)}
+    return sorted(n for n in _load_registry() if n in live)
 
 
 def kill(name: str) -> None:
     """Terminate a child (and its tmux session). No-op if already gone."""
     _tmux("kill-session", "-t", session_name(name), check=False)
+    reg = _load_registry()
+    if _plain(name) in reg:
+        del reg[_plain(name)]
+        _save_registry(reg)
+    _audit("kill", _plain(name))
 
 
 def find_lead(cwd: str, after_ts: float, leads=None):

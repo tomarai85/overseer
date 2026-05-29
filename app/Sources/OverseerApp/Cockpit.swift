@@ -58,6 +58,7 @@ final class Cockpit: ObservableObject {
 
     private var prevState: [String: String] = [:]
     private var lastNotified: [String: Double] = [:]
+    private var polling = false   // single-flight: a slow poll must not overlap the next
 
     nonisolated static let bin = NSHomeDirectory() + "/overseer/bin/overseer"
 
@@ -98,6 +99,8 @@ final class Cockpit: ObservableObject {
     }
 
     func refresh() {
+        guard !polling else { return }   // skip if a poll is still in flight (no overlap/race)
+        polling = true
         Task.detached {
             let leadsData = Self.run(["leads"])
             let childData = Self.run(["children"])
@@ -107,6 +110,7 @@ final class Cockpit: ObservableObject {
                 self.detectAndNotify(leads)
                 self.leads = leads
                 self.workers = workers
+                self.polling = false
             }
         }
     }
