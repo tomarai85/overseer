@@ -29,6 +29,26 @@ struct Supervise: Decodable {
     let summary: String
 }
 
+struct GuardAlert: Decodable, Hashable, Identifiable {
+    let session_id: String
+    let name: String
+    let kind: String          // stalled / spiraling / over-budget / needs-human / crashed
+    let why: String
+    var id: String { session_id + ":" + kind }
+}
+
+struct AlertsResult: Decodable { let alerts: [GuardAlert] }
+
+func alertGlyph(_ kind: String) -> String {
+    switch kind {
+    case "stalled":     return "◴"   // silent hang
+    case "spiraling":   return "🔥"  // token runaway
+    case "over-budget": return "💸"
+    case "crashed":     return "✗"
+    default:            return "⚠"   // needs-human / other
+    }
+}
+
 enum Selection: Hashable { case parent, worker(String) }
 
 func glyph(_ state: String) -> String {
@@ -67,6 +87,7 @@ final class Cockpit: ObservableObject {
     @Published var sending = false
     @Published var workerScreen = ""
     @Published var notify = true
+    @Published var attention: [GuardAlert] = []   // the moat: stalled/spiraling/over-budget, surfaced
 
     private var prevState: [String: String] = [:]
     private var lastNotified: [String: Double] = [:]
@@ -215,6 +236,16 @@ final class Cockpit: ObservableObject {
         }
     }
 
+    /// The moat, surfaced: poll the unified attention feed (stalled/spiraling/
+    /// over-budget). Heavier (scans transcripts) so the GUI calls it on a slow timer.
+    func refreshAttention() {
+        Task.detached {
+            let data = Self.run(["alerts"])
+            let list = (try? JSONDecoder().decode(AlertsResult.self, from: data))?.alerts ?? []
+            await MainActor.run { self.attention = list }
+        }
+    }
+
     var counts: String {
         var c: [String: Int] = [:]
         for l in leads { c[l.state, default: 0] += 1 }
@@ -228,6 +259,7 @@ final class Cockpit: ObservableObject {
 struct CockpitView: View {
     @StateObject private var c = Cockpit()
     private let tick = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
+    private let attentionTick = Timer.publish(every: 20, on: .main, in: .common).autoconnect()
 
     var body: some View {
         NavigationSplitView {
@@ -240,11 +272,12 @@ struct CockpitView: View {
             }
         }
         .frame(minWidth: 820, minHeight: 540)
-        .onAppear { c.loadHistory(); c.refresh() }
+        .onAppear { c.loadHistory(); c.refresh(); c.refreshAttention() }
         .onReceive(tick) { _ in
             c.refresh()
             if case .worker(let n) = c.selection { c.refreshWorker(n) }
         }
+        .onReceive(attentionTick) { _ in c.refreshAttention() }
     }
 }
 
@@ -254,6 +287,18 @@ struct Sidebar: View {
 
     var body: some View {
         List {
+            if !c.attention.isEmpty {
+                Section("⚠ NEEDS YOU") {
+                    ForEach(c.attention) { a in
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("\(alertGlyph(a.kind))  \(a.name)")
+                                .font(.caption).fontWeight(.semibold).foregroundColor(.orange)
+                            Text(a.why).font(.caption2).foregroundColor(.secondary).lineLimit(2)
+                        }
+                        .padding(.vertical, 1)
+                    }
+                }
+            }
             Section {
                 row(title: "Fleet Parent", glyphStr: "🧠", color: .blue,
                     selected: c.selection == .parent) { c.selection = .parent }
