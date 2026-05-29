@@ -119,6 +119,16 @@ def run():
     finally:
         driver._tmux, driver.exists = orig_tmux, orig_exists
 
+    # --- registry writes are atomic: a torn children.json would orphan every owned
+    #     child (corrupt -> _load_registry returns {} -> is_owned False for all) ---
+    driver._save_registry({"helix": {"cwd": "/x"}, "note": {"cwd": "/y"}})
+    res.append(("registry roundtrips", driver._load_registry() == {"helix": {"cwd": "/x"}, "note": {"cwd": "/y"}}))
+    res.append(("no leftover .tmp after save", list(_tmp.glob("*.tmp")) == []))
+    # a pre-existing temp file must not corrupt the next save (rename overwrites it)
+    (_tmp / "children.json.tmp").write_text("garbage{")
+    driver._save_registry({"only": {}})
+    res.append(("stale .tmp does not survive a save", driver._load_registry() == {"only": {}}))
+
     return res
 
 

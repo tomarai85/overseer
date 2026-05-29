@@ -54,8 +54,16 @@ def _load_registry() -> dict:
 
 
 def _save_registry(reg: dict) -> None:
+    # Write atomically (temp + rename): a direct overwrite that is interrupted
+    # (crash, SIGKILL, launchd restart) leaves a truncated children.json, and
+    # _load_registry treats a corrupt file as EMPTY — which silently orphans every
+    # owned child (is_owned -> False for all, so they can no longer be driven or
+    # killed). rename is atomic on the same filesystem, so a reader sees either the
+    # old or the new registry, never a torn one.
     DATA.mkdir(parents=True, exist_ok=True)
-    REGISTRY.write_text(json.dumps(reg, indent=2))
+    tmp = REGISTRY.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(reg, indent=2))
+    tmp.replace(REGISTRY)
 
 
 def _audit(action: str, target: str, detail: str = "") -> None:

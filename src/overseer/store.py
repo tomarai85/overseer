@@ -48,6 +48,15 @@ class Store:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(self.db_path), timeout=10.0)
         self.conn.row_factory = sqlite3.Row
+        # WAL so the daemon's writes don't block the CLI / web / GUI readers (this
+        # tool is multi-process by design — see the module docstring). In the default
+        # rollback journal a writer takes an exclusive lock that stalls every reader,
+        # which under a 24/7 poll loop surfaces as intermittent 'database is locked'.
+        try:
+            self.conn.execute("PRAGMA journal_mode=WAL")
+            self.conn.execute("PRAGMA synchronous=NORMAL")
+        except sqlite3.OperationalError:
+            pass        # e.g. :memory: or a FS without WAL — fall back to default
         self.conn.executescript(_SCHEMA)
         # migrate DBs created before a column existed (CREATE TABLE IF NOT EXISTS
         # is a no-op on an existing table, so new columns must be added explicitly).

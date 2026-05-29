@@ -63,6 +63,10 @@ def run():
     prev = s.upsert_lead(row)
     res.append(check("store: first upsert prev=None", prev is None))
     res.append(check("store: row persisted", len(s.all_leads()) == 1))
+    res.append(check("store: WAL journal mode (readers don't block on the daemon's writes)",
+                     s.conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"))
+    res.append(check("store: tolerates a row without a title key (demo path)",
+                     dict(s.all_leads()[0]).get("title") is None))
 
     # transition detection
     row["derived_state"] = "needs-human"
@@ -78,6 +82,11 @@ def run():
     # events
     s.log_event("s1", "test", "hi")
     res.append(check("store: event logged", any(e["kind"] == "test" for e in s.recent_events())))
+    # title column persists (the ai-title label) — added after mark_gone so the
+    # extra row can't perturb that test's present-set arithmetic
+    s.upsert_lead({**row, "session_id": "s_t", "derived_state": "working", "title": "My Session"})
+    titled = {r["session_id"]: r["title"] for r in s.all_leads()}
+    res.append(check("store: title column persists", titled.get("s_t") == "My Session"))
     s.close()
     return res
 
