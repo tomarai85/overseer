@@ -51,6 +51,28 @@ def run():
     budget.set_budget("default", 0)        # removes the default
     u = budget.status(leads=[roster.Lead(session_id="z", name="z")])["sessions"][0]
     res.append(("no budget -> unset (no false breach)", u["state"] == "unset"))
+
+    # ---- fleet-wide hard cap (#4) ----
+    budget.LEDGER = tmp / "fleet-ledger.json"
+    budget.set_budget("fleet", 1000)
+    usage.session_usage = lambda sid: {"output": {"f1": 700, "f2": 1500}.get(sid, 0),
+                                       "input": 0, "cache_read": 0, "cache_write": 0, "messages": 1}
+    fleet_leads = [roster.Lead(session_id="f1", name="f1"), roster.Lead(session_id="f2", name="f2")]
+    roster.fetch = lambda: fleet_leads
+    driver.list_children = lambda: []   # no owned children -> enforce pauses nothing
+
+    fs = budget.fleet_status(leads=fleet_leads, now_date="2026-01-01")
+    res.append(("fleet total sums all sessions", fs["fleet_total"] == 2200))
+    res.append(("fleet over its cap", fs["fleet_state"] == "over"))
+    res.append(("worst offender = highest output", fs["worst"]["name"] == "f2"))
+
+    budget._save_ledger({"2026-01-02": 2000})   # seed today's baseline
+    fs2 = budget.fleet_status(leads=fleet_leads, now_date="2026-01-02")
+    res.append(("daily burn = total - today's baseline", fs2["daily_burn"] == 200))
+
+    en = budget.enforce_fleet(dry_run=True)
+    res.append(("enforce flags the breach (dry-run, no owned to pause)",
+                en["breached"] is True and en["paused"] == []))
     return res
 
 

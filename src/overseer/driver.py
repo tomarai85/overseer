@@ -179,7 +179,10 @@ def send(name: str, text: str, settle: float = 0.4) -> None:
                        input=text, text=True, capture_output=True)
         _tmux("paste-buffer", "-t", sn, "-b", buf, "-p", "-d")   # -p = bracketed, -d = drop buffer
     else:
-        _tmux("send-keys", "-t", sn, "-l", text)
+        # `--` ends option parsing so a command that itself starts with '-'
+        # (e.g. "-X cancel") is typed literally, not eaten by tmux as a flag
+        # (which silently dropped the command — leaving a bare Enter).
+        _tmux("send-keys", "-t", sn, "-l", "--", text)
     time.sleep(settle)
     _tmux("send-keys", "-t", sn, "Enter")
     _audit("send", _plain(name), text)

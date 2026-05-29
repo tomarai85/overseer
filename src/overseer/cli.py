@@ -121,10 +121,16 @@ def cmd_budget(args: list[str]) -> int:
     from . import budget
     if args and args[0] == "set":
         if len(args) < 3:
-            print("usage: overseer budget set <name|session-id|default> <output_tokens>", file=sys.stderr)
+            print("usage: overseer budget set <name|session-id|default|fleet|daily> <output_tokens>", file=sys.stderr)
             return 2
         budget.set_budget(args[1], int(args[2]))
         print(json.dumps({"set": args[1], "budget": int(args[2])}))
+        return 0
+    if args and args[0] == "fleet":
+        print(json.dumps(budget.fleet_status()))
+        return 0
+    if args and args[0] == "enforce":
+        print(json.dumps(budget.enforce_fleet(dry_run="--go" not in args)))
         return 0
     print(json.dumps(budget.status()))
     return 0
