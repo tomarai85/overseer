@@ -75,6 +75,18 @@ check("pane_state: interrupt marker -> working", relay.pane_state("w") == "worki
 _pane["w"] = "Do you want to proceed?\n1. Yes"
 check("pane_state: permission -> needs-human", relay.pane_state("w") == "needs-human")
 
+# 0b. _clean_pane strips TUI chrome, keeps the worker's real output
+_dirty = ("╭─── Claude Code v2.1.156 ───╮\n"
+          "│ Welcome back ARaito!       │\n"
+          "the real answer is 42\n"
+          "⏵⏵ bypass permissions on (shift+tab)\n"
+          "❯ ")
+_cleaned = relay._clean_pane(_dirty)
+check("_clean_pane keeps real output", "the real answer is 42" in _cleaned)
+check("_clean_pane strips banner/status chrome",
+      "Welcome back" not in _cleaned and "bypass permissions" not in _cleaned
+      and "Claude Code v" not in _cleaned)
+
 # 1. tell refuses a non-owned target
 reset()
 check("tell refuses non-owned target", raises(lambda: relay.tell("ghost", "hi")))

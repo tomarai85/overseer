@@ -15,10 +15,10 @@ are solved here, without ever risking a live session:
 Guards (same boundary as driver.send/kill, plus quiescence):
   - both src and dst MUST be Overseer-owned (driver.is_owned) — never Tom's own
     hand-started sessions;
-  - the TARGET must be quiescent (supervisor.child_state == 'waiting') before we
-    type into it; a working / needs-human / stuck / crashed target is refused
-    unless force=True is passed explicitly (and that override is audited). This is
-    the guard that stops a relay from interrupting a worker mid-tool;
+  - the TARGET must be quiescent (relay.pane_state == 'waiting') before we type into
+    it; a working / needs-human target is refused unless force=True is passed
+    explicitly (and that override is audited). This is the guard that stops a relay
+    from interrupting a worker mid-tool;
   - every action is appended to a relay audit log (the driver audits the keystroke).
 """
 from __future__ import annotations
@@ -47,6 +47,28 @@ READY_PROMPT = "❯"
 _WORKING_MARKERS = ("esc to interrupt", "✻", "Cogitating")
 _PERMISSION_MARKERS = ("Do you want to proceed", "Do you want to make this edit",
                        "❯ 1.", "1. Yes", "Allow this", "approve?")
+
+# TUI chrome to strip when extracting a worker's actual output for relay. Kept
+# self-contained so relay depends only on `driver` (not a sibling module's private
+# helper that is under active concurrent edit).
+_BOX = "│╭╮╰╯─━┄┈ ▐▛▜▌▝▘▀\t"
+_CHROME = ("bypass permissions", "Welcome back", "Tips for getting started",
+           "/release-notes", "What's new", "Opus 4.8", "esc to interrupt",
+           "? for shortcuts", "for agents", "MCP server", "Claude Code v")
+
+
+def _clean_pane(text: str) -> str:
+    """Strip claude TUI chrome (box borders, banners, status line) so what remains
+    is the worker's actual conversation output."""
+    out = []
+    for line in text.splitlines():
+        s = line.strip(_BOX).strip()
+        if not s or s.startswith(("Weekly ", "Code ")):
+            continue
+        if any(n in s for n in _CHROME):
+            continue
+        out.append(s)
+    return "\n".join(out)
 
 
 def pane_state(name: str) -> str:
@@ -105,8 +127,7 @@ def latest_output(name: str, max_chars: int = 2000) -> str:
     """An owned child's most recent meaningful pane text (TUI chrome stripped)."""
     _require_owned(name, "source")
     raw = driver.read(name, lines=140)
-    cleaned = supervisor._clean(raw)
-    return cleaned[-max_chars:].strip()
+    return _clean_pane(raw)[-max_chars:].strip()
 
 
 def relay(src: str, dst: str, frame: str | None = None,
