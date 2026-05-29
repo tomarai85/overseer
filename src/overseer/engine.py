@@ -53,9 +53,16 @@ def scan_once(store: Store, on_transition: TransitionCB | None = None) -> dict[s
                 pass
     gone = store.mark_gone(present_ids)
     for sid in gone:
-        store.log_event(sid, "transition", "-> gone")
-        if on_transition:
-            on_transition(sid, None, "gone", sid[:8])
+        # Guard per gone-sid, same as the per-lead loop: a log/notify failure must
+        # not abort the scan and skip the remaining gone sessions. mark_gone reports
+        # each gone transition only ONCE (the next scan sees it already 'gone'), so an
+        # unguarded failure here would permanently drop that 'session gone' alert.
+        try:
+            store.log_event(sid, "transition", "-> gone")
+            if on_transition:
+                on_transition(sid, None, "gone", sid[:8])
+        except Exception:
+            pass
     if gone:
         counts["gone"] = counts.get("gone", 0) + len(gone)
     return counts

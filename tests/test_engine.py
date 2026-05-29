@@ -88,8 +88,44 @@ def run_threadsafety():
     return res
 
 
+def run_gone_notify_resilience():
+    """A log/notify failure on a 'gone' transition must NOT abort the scan. Without
+    the per-gone-sid guard, the first failure would skip the remaining gone sids,
+    and since mark_gone reports each gone transition only ONCE, those 'session gone'
+    alerts would be lost forever. Mirrors the per-lead guard."""
+    res = []
+    tmp = Path(tempfile.mkdtemp())
+    leads = [roster.Lead(session_id="g1", pid=1, raw_status="idle"),
+             roster.Lead(session_id="g2", pid=2, raw_status="idle")]
+    roster.fetch = lambda: leads
+    state.derive = lambda lead: {"domain": "d", "derived_state": "waiting",
+                                 "last_event": "x", "last_mtime": 1.0}
+    s = Store(tmp / "g.db")
+    engine.scan_once(s)                       # first_seen g1, g2 (no notify)
+    leads.clear()                             # both disappear -> both gone next scan
+    seen = []
+
+    def boom(sid, prev, new, label):
+        seen.append(sid)
+        raise RuntimeError("notify down")     # every gone notify fails
+
+    counts = engine.scan_once(s, on_transition=boom)   # MUST NOT raise
+    states = {r["session_id"]: r["derived_state"] for r in s.all_leads()}
+    res.append(("scan survives a notify failure on a gone transition", counts.get("gone") == 2))
+    res.append(("all gone sids still processed despite the raise", set(seen) == {"g1", "g2"}))
+    res.append(("both still marked gone in the store",
+                states.get("g1") == "gone" and states.get("g2") == "gone"))
+    s.close()
+    return res
+
+
 def test_engine():
     for name, ok in run():
+        assert ok, name
+
+
+def test_gone_notify_resilience():
+    for name, ok in run_gone_notify_resilience():
         assert ok, name
 
 
@@ -99,7 +135,7 @@ def test_threadsafety():
 
 
 if __name__ == "__main__":
-    rows = run() + run_threadsafety()
+    rows = run() + run_gone_notify_resilience() + run_threadsafety()
     passed = sum(1 for _, ok in rows if ok)
     for name, ok in rows:
         print(f"  {'PASS' if ok else 'FAIL'}  {name}")
