@@ -75,7 +75,9 @@ def run():
     progress.SNAP = Path(_tf.mkdtemp()) / "snap.json"          # isolate; don't touch real data
     _usage.session_usage = lambda sid: {"output": 500, "input": 0, "cache_read": 0,
                                         "cache_write": 0, "messages": 1}
-    progress._loop_for = lambda sid: "Bash" if sid == "loopy" else None
+    _loop_recs = [{"type": "assistant", "message": {"role": "assistant",
+                   "content": [{"type": "tool_use", "name": "Bash", "input": {"cmd": "ls"}}]}}] * 3
+    progress._tail_for = lambda sid: _loop_recs if sid == "loopy" else []
     fp = progress.fleet_progress(
         leads=[_roster.Lead(session_id="loopy", name="loopy", raw_status="busy"),
                _roster.Lead(session_id="fine", name="fine", raw_status="busy")], now=NOW)

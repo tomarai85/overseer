@@ -114,23 +114,23 @@ def classify(session_id: str, raw_status: str | None, now: float | None = None,
             "flat_for": round(flat_for, 1), "rate_per_min": round(rate)}
 
 
-def _loop_for(session_id: str) -> str | None:
-    """The repeated tool name if this session is stuck looping, else None. Reads the
-    transcript tail and applies state.detect_loop (conservative, exact-match)."""
+def _tail_for(session_id: str) -> list:
+    """The transcript tail records for a session (or []). One read, reused below for
+    BOTH the display title and loop detection (a separate seam so tests can mock it)."""
     from . import state
     t = state.find_transcript(session_id)
     if not t:
-        return None
+        return []
     try:
-        return state.detect_loop(state._tail_records(t))
+        return state._tail_records(t)
     except Exception:
-        return None
+        return []
 
 
 def fleet_progress(leads=None, now: float | None = None) -> dict:
     """Classify every live session's progress truth; flag stalled / spiraling / looping."""
     now = now if now is not None else time.time()
-    from . import roster
+    from . import roster, state
     if leads is None:
         try:
             leads = roster.fetch()
@@ -140,13 +140,18 @@ def fleet_progress(leads=None, now: float | None = None) -> dict:
     rows = []
     for l in leads:
         r = classify(l.session_id, l.raw_status, now=now, snaps=snaps)
-        r["name"] = l.name or l.cwd or l.session_id[:8]
+        records = _tail_for(l.session_id)
+        # Name by the session's ai-title (not the shared cwd) so an alert can say WHICH
+        # session is stalled/looping — otherwise every alert reads '/Users/example' and
+        # the whole 'which agent needs me' point dies on the alert surface (found in
+        # dogfood 2026-05-30: the title fix had reached the board but not progress/alerts).
+        r["name"] = l.name or state.session_title(records) or l.cwd or l.session_id[:8]
         # Loop overlay: a session that token-progresses (or stalls) while repeating the
         # SAME tool call is stuck looping — the state token-delta alone can't see (it can
         # burn tokens forever and look 'progressing'). Only checked for ACTIVE verdicts;
         # detect_loop is conservative (exact 3-in-8) so a legit retry won't false-fire.
-        if r["verdict"] in ("progressing", "stalled"):
-            loop_tool = _loop_for(l.session_id)
+        if r["verdict"] in ("progressing", "stalled") and records:
+            loop_tool = state.detect_loop(records)
             if loop_tool:
                 r["verdict"] = "looping"
                 r["loop_tool"] = loop_tool
