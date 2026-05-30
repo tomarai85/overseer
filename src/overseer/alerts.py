@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from . import budget, progress
 
-_ORDER = {"stalled": 0, "spiraling": 1, "over-budget": 2}
+_ORDER = {"stalled": 0, "looping": 1, "spiraling": 2, "over-budget": 3}
 
 
 def attention(leads=None) -> dict:
@@ -30,6 +30,9 @@ def attention(leads=None) -> dict:
         if s["verdict"] == "stalled":
             alerts.append({"session_id": s["session_id"], "name": s["name"], "kind": "stalled",
                            "why": f"no new output for {s['flat_for']}s — silent hang?"})
+        elif s["verdict"] == "looping":
+            alerts.append({"session_id": s["session_id"], "name": s["name"], "kind": "looping",
+                           "why": f"repeating {s.get('loop_tool', 'a tool')} — stuck in a loop?"})
         elif s["verdict"] == "spiraling":
             alerts.append({"session_id": s["session_id"], "name": s["name"], "kind": "spiraling",
                            "why": f"{s['rate_per_min']:,} output tok/min — runaway?"})

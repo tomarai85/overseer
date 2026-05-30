@@ -114,8 +114,21 @@ def classify(session_id: str, raw_status: str | None, now: float | None = None,
             "flat_for": round(flat_for, 1), "rate_per_min": round(rate)}
 
 
+def _loop_for(session_id: str) -> str | None:
+    """The repeated tool name if this session is stuck looping, else None. Reads the
+    transcript tail and applies state.detect_loop (conservative, exact-match)."""
+    from . import state
+    t = state.find_transcript(session_id)
+    if not t:
+        return None
+    try:
+        return state.detect_loop(state._tail_records(t))
+    except Exception:
+        return None
+
+
 def fleet_progress(leads=None, now: float | None = None) -> dict:
-    """Classify every live session's progress truth; flag stalled/spiraling."""
+    """Classify every live session's progress truth; flag stalled / spiraling / looping."""
     now = now if now is not None else time.time()
     from . import roster
     if leads is None:
@@ -128,11 +141,20 @@ def fleet_progress(leads=None, now: float | None = None) -> dict:
     for l in leads:
         r = classify(l.session_id, l.raw_status, now=now, snaps=snaps)
         r["name"] = l.name or l.cwd or l.session_id[:8]
+        # Loop overlay: a session that token-progresses (or stalls) while repeating the
+        # SAME tool call is stuck looping — the state token-delta alone can't see (it can
+        # burn tokens forever and look 'progressing'). Only checked for ACTIVE verdicts;
+        # detect_loop is conservative (exact 3-in-8) so a legit retry won't false-fire.
+        if r["verdict"] in ("progressing", "stalled"):
+            loop_tool = _loop_for(l.session_id)
+            if loop_tool:
+                r["verdict"] = "looping"
+                r["loop_tool"] = loop_tool
         rows.append(r)
     _save(snaps)
-    flagged = [r for r in rows if r["verdict"] in ("stalled", "spiraling")]
-    rows.sort(key=lambda r: {"stalled": 0, "spiraling": 1, "progressing": 2,
-                             "idle": 3, "unknown": 4}.get(r["verdict"], 5))
+    flagged = [r for r in rows if r["verdict"] in ("stalled", "spiraling", "looping")]
+    rows.sort(key=lambda r: {"stalled": 0, "looping": 1, "spiraling": 2, "progressing": 3,
+                             "idle": 4, "unknown": 5}.get(r["verdict"], 6))
     return {"sessions": rows, "flagged": flagged,
             "summary": (", ".join(f"{r['name']}:{r['verdict']}" for r in flagged)
                         if flagged else "all sessions progressing or idle")}

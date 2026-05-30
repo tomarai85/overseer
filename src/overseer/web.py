@@ -61,6 +61,7 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
     border-radius:9px;background:#1c1410;border-left:3px solid #ffb020;cursor:pointer}
   .alert-chip:hover{filter:brightness(1.2)}
   .alert-chip.stalled{border-color:#ff5c5c;background:#1c1012}
+  .alert-chip.looping{border-color:#5cc8ff;background:#101a1c}
   .alert-chip.spiraling{border-color:#ffb020}
   .alert-chip.over-budget{border-color:#c98bff;background:#16121c}
   .alert-chip .k{font-weight:700;font-size:11px;letter-spacing:1px}
@@ -319,6 +320,9 @@ def build_insight(leads=None) -> dict:
         if s["verdict"] == "stalled":
             alerts.append({"session_id": sid, "name": nm, "kind": "stalled",
                            "why": f"no new output for {s['flat_for']}s — silent hang?"})
+        elif s["verdict"] == "looping":
+            alerts.append({"session_id": sid, "name": nm, "kind": "looping",
+                           "why": f"repeating {s.get('loop_tool', 'a tool')} — stuck in a loop?"})
         elif s["verdict"] == "spiraling":
             alerts.append({"session_id": sid, "name": nm, "kind": "spiraling",
                            "why": f"{s['rate_per_min']:,} output tok/min — runaway?"})
@@ -327,7 +331,7 @@ def build_insight(leads=None) -> dict:
             eta = f", eta {b['eta_min']}m" if b.get("eta_min") else ""
             alerts.append({"session_id": sid, "name": nm, "kind": "over-budget",
                            "why": f"{int((b['pct'] or 0) * 100)}% of {b['budget']:,} tok budget{eta}"})
-    alerts.sort(key=lambda a: {"stalled": 0, "spiraling": 1, "over-budget": 2}.get(a["kind"], 9))
+    alerts.sort(key=lambda a: {"stalled": 0, "looping": 1, "spiraling": 2, "over-budget": 3}.get(a["kind"], 9))
 
     by_session = {}
     for s in prog["sessions"]:

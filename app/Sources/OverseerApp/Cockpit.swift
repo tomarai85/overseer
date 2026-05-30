@@ -52,6 +52,7 @@ struct Activity: Decodable, Identifiable {
 func alertGlyph(_ kind: String) -> String {
     switch kind {
     case "stalled":     return "◴"   // silent hang
+    case "looping":     return "🔁"  // stuck repeating the same tool
     case "spiraling":   return "🔥"  // token runaway
     case "over-budget": return "💸"
     case "crashed":     return "✗"

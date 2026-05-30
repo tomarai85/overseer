@@ -67,6 +67,23 @@ def run():
     r = progress.classify("o", "busy", now=NOW, snaps=snapsOld, tokens=10)
     res.append(("legacy snapshot schema upgrades without error", r["verdict"] in ("progressing", "idle", "stalled")))
     res.append(("  -> legacy entry gains a samples ring", isinstance(snapsOld["o"].get("samples"), list)))
+
+    # loop overlay: an active session repeating the same tool -> verdict 'looping' + flagged.
+    # The 'stuck/looping' state token-progress alone can't see (it can burn tokens forever).
+    import tempfile as _tf
+    from overseer import roster as _roster, usage as _usage
+    progress.SNAP = Path(_tf.mkdtemp()) / "snap.json"          # isolate; don't touch real data
+    _usage.session_usage = lambda sid: {"output": 500, "input": 0, "cache_read": 0,
+                                        "cache_write": 0, "messages": 1}
+    progress._loop_for = lambda sid: "Bash" if sid == "loopy" else None
+    fp = progress.fleet_progress(
+        leads=[_roster.Lead(session_id="loopy", name="loopy", raw_status="busy"),
+               _roster.Lead(session_id="fine", name="fine", raw_status="busy")], now=NOW)
+    by = {s["session_id"]: s for s in fp["sessions"]}
+    res.append(("loop overlay: repeating tool -> verdict 'looping'",
+                by["loopy"]["verdict"] == "looping" and by["loopy"].get("loop_tool") == "Bash"))
+    res.append(("non-looping active session stays progressing", by["fine"]["verdict"] == "progressing"))
+    res.append(("looping is flagged", any(s["session_id"] == "loopy" for s in fp["flagged"])))
     return res
 
 
