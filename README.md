@@ -1,5 +1,8 @@
 # Overseer
 
+[![tests](https://github.com/tomarai85/overseer/actions/workflows/tests.yml/badge.svg)](https://github.com/tomarai85/overseer/actions/workflows/tests.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A local **fleet cockpit** for a solo developer running many AI coding agents at once.
 You talk to **one** parent AI; it spawns and drives child Claude Code workers for you —
 instead of babysitting 7-8 terminals by hand.
