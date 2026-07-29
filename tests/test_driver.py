@@ -26,6 +26,7 @@ def run():
     driver.DATA = _tmp
     driver.REGISTRY = _tmp / "children.json"
     driver.AUDIT = _tmp / "audit.log"
+    driver._REG_LOCK = _tmp / "children.json.lock"
     driver.REGISTRY.write_text(_json.dumps({"worker1": {"tmux": "ov-worker1"}}))  # owned, for send tests
 
     # --- session_name always ends up ov-prefixed, exactly once ---
