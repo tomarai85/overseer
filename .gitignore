@@ -20,3 +20,7 @@ data/leases/
 # generated app icon (rebuilt by bin/build-app.sh via app/tools/make-icon.swift)
 app/Resources/Overseer.icns
 app/Resources/Overseer.iconset/
+
+# internal working notes -- not for publication
+.harness/
+MORNING.md
