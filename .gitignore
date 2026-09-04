@@ -25,3 +25,5 @@ app/Resources/Overseer.iconset/
 .harness/
 MORNING.md
 .build/
+data/
+!data/.gitkeep
