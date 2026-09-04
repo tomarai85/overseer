@@ -142,7 +142,7 @@ def fleet_progress(leads=None, now: float | None = None) -> dict:
         r = classify(l.session_id, l.raw_status, now=now, snaps=snaps)
         records = _tail_for(l.session_id)
         # Name by the session's ai-title (not the shared cwd) so an alert can say WHICH
-        # session is stalled/looping — otherwise every alert reads '/Users/example' and
+        # session is stalled/looping — otherwise every alert reads the shared cwd and
         # the whole 'which agent needs me' point dies on the alert surface (found in
         # dogfood 2026-05-30: the title fix had reached the board but not progress/alerts).
         r["name"] = l.name or state.session_title(records) or l.cwd or l.session_id[:8]

@@ -24,3 +24,4 @@ app/Resources/Overseer.iconset/
 # internal working notes -- not for publication
 .harness/
 MORNING.md
+.build/

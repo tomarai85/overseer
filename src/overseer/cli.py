@@ -8,6 +8,7 @@ Usage:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import sys
 import time
 
@@ -197,16 +198,16 @@ def cmd_demo(argv: list[str]) -> int:
     synthetic = [
         ("helix-ios", "needs-human", "assistant:tool_use", 40, "needs your approval on a tool"),
         ("directstack-x", "crashed", "assistant:tool_use", 95, "died mid-tool (400 thinking-block)"),
-        ("vault-sync", "blocked", "assistant:thinking", 720, "busy 12m, transcript frozen"),
+        ("db-migrate", "blocked", "assistant:thinking", 720, "busy 12m, transcript frozen"),
         ("davinci-edit", "working", "assistant:tool_use", 3, "running a tool"),
         ("growth-graph", "working", "user:tool_result", 12, "processing"),
         ("flote-api", "waiting", "assistant:text", 480, "turn done, waiting for you"),
-        ("note-autopost", "done", "assistant:text", 1500, "finished cleanly"),
+        ("changelog-bot", "done", "assistant:text", 1500, "finished cleanly"),
     ]
     for i, (name, st, ev, age, _note) in enumerate(synthetic):
         s.upsert_lead({
             "session_id": f"demo{i:02d}-0000-0000-0000-{i:012d}", "pid": 10000 + i,
-            "name": name, "cwd": "/Users/example", "domain": f"-Users-example-{name}",
+            "name": name, "cwd": str(Path.home()), "domain": f"-demo-{name}",
             "raw_status": "busy" if st in ("working", "blocked") else "idle",
             "derived_state": st, "last_event": ev,
             "last_mtime": now - age, "started_at": now - age - 1000,

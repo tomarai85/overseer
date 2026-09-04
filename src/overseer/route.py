@@ -13,15 +13,20 @@ ownership + quiescence guards apply.
 """
 from __future__ import annotations
 
+import getpass
 import re
 
 from . import driver, relay
 
 _WORD = re.compile(r"[a-z0-9]+")
 # generic path/dir tokens that carry no routing signal (every worker shares them)
-_STOP = {"users", "tomtim", "home", "var", "tmp", "private", "the", "fix", "this",
+_STOP = {"users", "home", "var", "tmp", "private", "the", "fix", "this",
          "that", "and", "for", "with", "please", "run", "make", "to", "a", "in",
          "on", "of", "it", "do", "add", "update", "check"}
+# The account name is the single most common token across every worker's cwd, so it carries no
+# signal either — but it is different on every machine, so it is read at import rather than
+# written into the set above.
+_STOP.add(getpass.getuser().lower())
 
 
 def _tokens(s: str | None) -> set[str]:
