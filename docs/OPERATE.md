@@ -34,9 +34,9 @@ generation running) is left alone unless `--force` is passed.
 hash): `esc to interrupt` / `✻` / `Cogitating` ⇒ **working**; a permission prompt's
 markers ⇒ **needs-human**; otherwise the idle `❯` chevron ⇒ **waiting** (safe).
 This was hardened after a live test showed a content-hash heartbeat reads an idle
-claude as "working" forever (its TUI animates). See
-`.harness/feedback/finding-quiescence-idle-reads-working-2026-05-29.md` — the same
-fix is recommended for `supervisor.child_state` (the dashboard path).
+claude as "working" forever, because its TUI animates and so the screen keeps changing
+while nothing is happening. `docs/STATE-TRUTH.md` covers why hashing the surface is the
+wrong signal; the same fix is recommended for `supervisor.child_state` (the dashboard path).
 
 ## Examples
 
