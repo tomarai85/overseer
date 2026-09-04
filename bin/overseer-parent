@@ -22,7 +22,16 @@ echo >&2
 
 # command-bridge: the guard hook (via --settings) blocks any Bash that isn't an
 # `overseer ...` call, so the parent can't bypass the driver guards with raw tmux/rm.
-SANDBOX="$HERE/parent/sandbox-settings.json"
-SETTINGS_ARG=()
-[ -f "$SANDBOX" ] && SETTINGS_ARG=(--settings "$SANDBOX")
-exec "$CLAUDE" --dangerously-skip-permissions "${SETTINGS_ARG[@]}" --append-system-prompt-file "$PARENT_MD" "$@"
+# The tracked settings file is a template — it names the guard hook by absolute path, and an
+# absolute path cannot be committed. Resolve it against this checkout, and FAIL CLOSED: the old
+# form was `[ -f "$SANDBOX" ] && SETTINGS_ARG=(--settings ...)`, which silently launched Claude
+# with --dangerously-skip-permissions and no hook whenever the file was present but unusable.
+TMPL="$HERE/parent/sandbox-settings.json"
+GUARD="$HERE/hooks/parent-bash-guard.py"
+[ -f "$TMPL" ]  || { echo "parent sandbox template missing: $TMPL — refusing to launch unguarded" >&2; exit 1; }
+[ -f "$GUARD" ] || { echo "parent Bash guard missing: $GUARD — refusing to launch unguarded" >&2; exit 1; }
+mkdir -p "$HERE/data"
+SANDBOX="$HERE/data/sandbox-resolved.json"
+sed "s|__OVERSEER_HOME__|$HERE|g" "$TMPL" > "$SANDBOX"
+grep -q '__OVERSEER_HOME__' "$SANDBOX" && { echo "sandbox substitution failed — refusing to launch unguarded" >&2; exit 1; }
+exec "$CLAUDE" --dangerously-skip-permissions --settings "$SANDBOX" --append-system-prompt-file "$PARENT_MD" "$@"

@@ -21,6 +21,32 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[2]            # ~/overseer
+
+_HOME_TOKEN = "__OVERSEER_HOME__"
+
+
+def _resolved_sandbox_settings() -> Path:
+    """Write the launch-ready settings file and return it. Raises if the guard cannot be wired.
+
+    The template carries `__OVERSEER_HOME__` so the repo holds no machine-specific path; the guard
+    hook it points at only works once that is replaced with this checkout's root. Everything here
+    that can go wrong raises, because the caller starts Claude with --dangerously-skip-permissions
+    and the hook is the only thing standing between that and the host.
+    """
+    tmpl = HERE / "parent" / "sandbox-settings.json"
+    if not tmpl.exists():
+        raise RuntimeError(f"parent sandbox template missing: {tmpl} — refusing to launch the "
+                           f"parent with skipped permissions and no Bash guard")
+    guard = HERE / "hooks" / "parent-bash-guard.py"
+    if not guard.exists():
+        raise RuntimeError(f"parent Bash guard missing: {guard} — refusing to launch unguarded")
+    out = HERE / "data" / "sandbox-resolved.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    text = tmpl.read_text().replace(_HOME_TOKEN, str(HERE))
+    if _HOME_TOKEN in text:
+        raise RuntimeError("sandbox template substitution failed — refusing to launch unguarded")
+    out.write_text(text)
+    return out
 PARENT_MD = HERE / "parent" / "PARENT.md"
 DATA = Path(os.environ.get("OVERSEER_DATA", str(HERE / "data")))
 SESSION_FILE = DATA / "parent-session.json"
@@ -98,10 +124,17 @@ def send(message: str, timeout: float = 300.0) -> dict:
     # blocks any Bash that isn't an `overseer ...` call, so the parent physically
     # cannot bypass the driver's ownership guards by running raw tmux/rm/etc.
     # (verified 2026-05-29: blocks tmux, allows overseer, even with skip-permissions).
-    sandbox = HERE / "parent" / "sandbox-settings.json"
-    cmd = [binp, "-p", "--output-format", "json", "--dangerously-skip-permissions"]
-    if sandbox.exists():
-        cmd += ["--settings", str(sandbox)]
+    # The tracked settings file is a TEMPLATE: it names the guard hook by absolute path, and an
+    # absolute path cannot be committed. Resolve it here, at launch, against this checkout.
+    #
+    # FAIL CLOSED. Until 2026-09-04 both launch paths did `if sandbox.exists(): add --settings`,
+    # so a settings file that was present but unusable — which is exactly what an unsubstituted
+    # __OVERSEER_HOME__ produces — meant Claude started with --dangerously-skip-permissions and NO
+    # hook at all. The weaker the containment, the quieter the failure. If the guard cannot be
+    # wired, this refuses to launch instead.
+    sandbox = _resolved_sandbox_settings()
+    cmd = [binp, "-p", "--output-format", "json", "--dangerously-skip-permissions",
+           "--settings", str(sandbox)]
     if sid:
         cmd += ["--resume", sid]
     else:

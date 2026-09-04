@@ -26,10 +26,43 @@ cmd = ((data.get("tool_input") or {}).get("command") or "").strip()
 
 # Allowed: the command's first token is the overseer CLI...
 first_ok = bool(re.match(r'^(?:\S*/overseer/bin/overseer|overseer)\b', cmd))
-# ...and it doesn't chain to / contain a dangerous second command.
-chains_danger = bool(re.search(r'(?:^|[;&|]\s*|\$\(|`)\s*(?:tmux|rm|kill|killall|curl|wget|nc|ssh|scp|chmod|chown|sudo|launchctl)\b', cmd))
 
-if first_ok and not chains_danger:
+
+def chains(command: str) -> bool:
+    """True if anything here can start a SECOND command or redirect output.
+
+    This replaced a denylist on 2026-09-04. The old test was "does a dangerous WORD follow a chain
+    operator", against a list of tmux/rm/kill/curl/ssh/…, and it let through every interpreter that
+    was not on the list: `overseer status; python3 -c '...'` scored allowed, as did node, osascript
+    and `$(perl -e ...)`. A guard that permits unless it recognises the danger is permissive exactly
+    where it understands the input least, which is the opposite of what a containment boundary is
+    for. The question is now structural — is this ONE simple command — and the answer does not
+    depend on knowing what any particular program is called.
+
+    Quoted text is exempt so that `overseer tell web "build && test"` still works: what matters is
+    whether the SHELL would see an operator, not whether the string contains one.
+    """
+    quote = None
+    i, n = 0, len(command)
+    while i < n:
+        c = command[i]
+        if quote:
+            if c == "\\" and quote == '"':
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+        elif c in "'\"":
+            quote = c
+        elif c in ";&|`\n><":
+            return True
+        elif c == "$" and i + 1 < n and command[i + 1] == "(":
+            return True
+        i += 1
+    return False
+
+
+if first_ok and not chains(cmd):
     sys.exit(0)  # allow
 
 print("BLOCKED by parent-bash-guard: the fleet parent may only run `overseer ...` "
