@@ -260,7 +260,7 @@ final class Cockpit: ObservableObject {
     }
 
     /// Start a worker from the GUI (spawn waits for it to boot, then optionally
-    /// sends a first task). Selects it so Tom sees its screen immediately.
+    /// sends a first task). Selects it so the operator sees its screen immediately.
     func spawnWorker(name: String, dir: String, task: String) {
         let n = name.trimmingCharacters(in: .whitespaces)
         // names go to the CLI as argv + become tmux session names — keep them tame

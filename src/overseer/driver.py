@@ -7,7 +7,7 @@ that mechanic into a safe, named API.
 Design rules:
   - We ONLY ever touch tmux sessions we created (prefix `ov-`). A session
     without that prefix is never sent keys or killed. This keeps the driver
-    from ever poking Tom's own hand-started terminals by accident.
+    from ever poking the operator's own hand-started terminals by accident.
   - `send` types the text literally (`-l`) so a prompt that happens to contain
     a tmux key name ("Enter", "C-c") is not interpreted; submission is a
     separate, deliberate Enter after a short settle.

@@ -3,7 +3,7 @@
 Polls the unified attention feed (alerts.attention: stalled / spiraling /
 over-budget across ALL sessions) plus the owned-children supervisor
 (needs-human / crashed / stuck) and fires a native notification the moment a
-session TRULY needs Tom — debounced per (session, kind) so it never nags or
+session TRULY needs the operator — debounced per (session, kind) so it never nags or
 spams. This is the payoff of the whole stack: "ping me only when it matters,"
 even when the cockpit app and every terminal are closed.
 
@@ -20,7 +20,7 @@ DEBOUNCE_SEC = 180.0
 
 
 def collect() -> list[tuple[str, str, str]]:
-    """Return (dedupe_key, title, body) for every session that needs Tom right now."""
+    """Return (dedupe_key, title, body) for every session that needs the operator right now."""
     out: list[tuple[str, str, str]] = []
     try:
         from . import alerts

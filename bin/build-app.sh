@@ -20,7 +20,7 @@ cp "$HERE/app/Info.plist" "$CONTENTS/Info.plist"
 [ -f "$HERE/app/Resources/Overseer.icns" ] && cp "$HERE/app/Resources/Overseer.icns" "$CONTENTS/Resources/" || true
 
 # ad-hoc sign so Gatekeeper lets a locally-built app run (real notarization is
-# Tom's distribution step; ad-hoc is fine for personal/dogfood use)
+# The operator's distribution step; ad-hoc is fine for personal/dogfood use)
 codesign --force --deep --sign - "$APP" 2>/dev/null || echo "(codesign skipped)"
 
 echo "done: $APP"

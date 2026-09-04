@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   Overseer daemon launchd template. TEMPLATE ONLY — not loaded by Overseer.
-  Tom installs manually when ready:
+  The operator installs manually when ready:
 
     cp deploy/com.overseer.web.plist ~/Library/LaunchAgents/
     launchctl load ~/Library/LaunchAgents/com.overseer.web.plist

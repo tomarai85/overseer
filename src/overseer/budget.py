@@ -3,7 +3,7 @@
 The one thing no free competitor does (research 2026-05-29): a per-session token
 budget with projection and an opt-in auto-pause on breach. Built on usage.py
 (current output tokens) + progress.py (burn rate -> time-to-limit). OWNED children
-can be safely paused (a stop message via the guarded driver.send); Tom's own
+can be safely paused (a stop message via the guarded driver.send); the operator's own
 sessions are READ-ONLY flagged — never touched.
 
 Budgets live in data/budgets.json: {"default": N, "<name-or-session-id>": N}.
@@ -119,7 +119,7 @@ def _owned_by_session(leads) -> dict:
 
 def pause_owned_over(dry_run: bool = True) -> list[dict]:
     """Find OWNED children over budget; if not dry_run, send each a guarded stop
-    message (driver.send refuses non-owned, so Tom's own sessions can never be hit).
+    message (driver.send refuses non-owned, so the operator's own sessions can never be hit).
     Default dry_run=True — auto-enforcement is opt-in (fail-safe)."""
     from . import roster
     try:
@@ -200,7 +200,7 @@ def fleet_status(leads=None, now_date: str | None = None) -> dict:
 
 def enforce_fleet(dry_run: bool = True) -> dict:
     """If the fleet/daily cap is breached, pause OWNED children that are over their
-    own per-session budget (precise + safe). Tom's sessions are never touched.
+    own per-session budget (precise + safe). the operator's sessions are never touched.
     Auto-enforcement is opt-in (dry_run default)."""
     fs = fleet_status()
     breached = fs["fleet_state"] == "over" or fs["daily_state"] == "over"

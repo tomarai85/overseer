@@ -1,4 +1,4 @@
-"""Tests for the guard watcher: fires (debounced) when a session truly needs Tom.
+"""Tests for the guard watcher: fires (debounced) when a session truly needs the operator.
 
   PYTHONPATH=src python3 tests/test_guard.py
 """

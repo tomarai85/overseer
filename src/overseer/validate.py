@@ -6,7 +6,7 @@ needs-you queue into a RANKED, pre-validated review queue — "only look at work
 already passed." Anthropic's own /goal supervisor validates this direction; we do
 it fleet-wide with the user's own test command.
 
-OWNED children only (we know their cwd from the registry); Tom's own sessions are
+OWNED children only (we know their cwd from the registry); the operator's own sessions are
 never run. On-demand by design (`overseer validate [name]`) — running project test
 commands is a side-effecting action, so it is explicit, not an unattended auto-gate.
 """

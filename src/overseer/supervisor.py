@@ -124,7 +124,7 @@ def child_state(name: str, now: float | None = None, hb: dict | None = None) -> 
 
 
 def summary(now: float | None = None) -> dict:
-    """Away-mode summary over all owned children: per-child state + what needs Tom."""
+    """Away-mode summary over all owned children: per-child state + what needs the operator."""
     now = now if now is not None else time.time()
     hb = _load_hb()
     children = []

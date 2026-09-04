@@ -326,13 +326,13 @@ def derive(lead: Any) -> dict[str, Any]:
     elif sig.pending_tool:
         # The tool has not returned. Fresh = running normally. Aged splits by
         # whether the process is still computing (busy=hung tool) or parked
-        # (idle=almost certainly a permission/approval prompt waiting on Tom).
+        # (idle=almost certainly a permission/approval prompt waiting on the operator).
         if age is not None and age >= STALE_BLOCKED_SEC:
             state = "blocked"                       # tool stuck for 10min+ -> hung
         elif raw == "busy":
             state = "working"                       # tool actively running
         elif age is not None and age >= NEEDS_HUMAN_MIN_AGE:
-            state = "needs-human"                   # idle + unresolved tool = waiting on Tom
+            state = "needs-human"                   # idle + unresolved tool = waiting on the operator
         else:
             state = "working"                       # transient tail race
     elif sig.thinking:
@@ -356,10 +356,10 @@ def derive(lead: Any) -> dict[str, Any]:
         else:
             state = "working"                       # human just spoke; agent about to respond
     elif sig.role == "assistant" and sig.asked_question:
-        # a clean turn that ends in a question is genuinely asking Tom
+        # a clean turn that ends in a question is genuinely asking the operator
         state = "needs-human" if (age is not None and age >= NEEDS_HUMAN_MIN_AGE) else "working"
     elif sig.role == "assistant":
-        state = "waiting"                           # turn complete, awaiting Tom's prompt
+        state = "waiting"                           # turn complete, awaiting the operator's prompt
     elif sig.is_tool_result:
         state = "working"                           # result just landed; agent resuming
     elif raw == "idle":

@@ -2,7 +2,7 @@
 
 The GUI needs clean text in / clean text out for the parent conversation, not a
 raw TUI to scrape. So we run the parent with `claude -p --output-format json`:
-each Tom message is one call; `--resume <session_id>` keeps the conversation (and
+each the operator message is one call; `--resume <session_id>` keeps the conversation (and
 the parent's memory of the fleet) continuous. The parent still operates children
 because `-p --dangerously-skip-permissions` executes tools (it runs the overseer
 CLI via Bash). The role is injected once (first turn) via --append-system-prompt-file.
@@ -85,7 +85,7 @@ def reset() -> None:
 
 
 def send(message: str, timeout: float = 300.0) -> dict:
-    """Send Tom's message to the parent and return {response, session_id}.
+    """Send the operator's message to the parent and return {response, session_id}.
 
     Blocking: the parent may spawn/check children, so a turn can take a while.
     The GUI calls this off the main thread and shows a spinner.

@@ -58,7 +58,7 @@ pane); safety-bounded autonomy (budget caps, scope freeze, auto-pause); review
 compression (cross-fleet prioritized diff/test-gate queue).
 
 **P2 — retention:** cross-machine/mobile glance (omnara-style, anchored to the Mac
-cockpit — relevant for Tom's Mac-mini-over-SSH setup; note the still-open headless
+cockpit — relevant for the operator's Mac-mini-over-SSH setup; note the still-open headless
 remote-control gap #30447); crash/stuck auto-recovery + session restore.
 
 ## Pricing / packaging

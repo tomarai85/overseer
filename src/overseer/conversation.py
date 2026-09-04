@@ -1,12 +1,12 @@
 """conversation — a session's recent exchange, for the dashboard's detail view.
 
 The board shows one derived line per worker (state + last_event). To issue a GOOD
-command Tom often needs to SEE what the worker is actually doing or asking — which
+command the operator often needs to SEE what the worker is actually doing or asking — which
 otherwise means dropping into the tmux/terminal. This turns a session's transcript
 tail into a short, readable recent exchange (the last few user/assistant turns),
-so a detail drawer can show context and Tom can reply informed.
+so a detail drawer can show context and the operator can reply informed.
 
-Read-only and transcript-based, so it works for ANY session (Tom's own sessions
+Read-only and transcript-based, so it works for ANY session (the operator's own sessions
 too, not just owned children) — same source the state-truth heuristic reads. It
 reuses state's transcript primitives rather than re-parsing, and skips the same
 injected scaffolding (compaction summaries / local-command caveats) state skips, so

@@ -2,7 +2,7 @@
 
 Fuses the moat guardrail signals — progress.stalled (silent hang), progress.spiraling
 (runaway burn), and budget over-cap — into ONE ranked list across ALL sessions
-(owned children AND Tom's own). This is what a notifier / cockpit / parent should
+(owned children AND the operator's own). This is what a notifier / cockpit / parent should
 consume to decide when to interrupt the human. needs-human/crashed already flow
 through the existing state/notify path; this adds the signals nobody else surfaces.
 """

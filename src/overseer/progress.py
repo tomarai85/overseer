@@ -9,7 +9,7 @@ while the session looks busy, the response has stalled.
 
 This layer snapshots each session's output-token total over time and derives a
 TRUE state the incumbent cannot: progressing / stalled / spiraling / idle. It
-reads usage from transcripts, so it works on ANY session — including Tom's own
+reads usage from transcripts, so it works on ANY session — including the operator's own
 hand-started ones (where a silent hang is the real, unsolved pain), not just
 Overseer-owned children. Call it repeatedly (daemon/poll) to build the history.
 """

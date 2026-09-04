@@ -10,7 +10,7 @@
 
 ## Next layer — S5: intent routing (DESIGN ONLY; not built)
 
-The "manager" half of "manager of managers": Tom says *"fix the auth bug"* to one place,
+The "manager" half of "manager of managers": the operator says *"fix the auth bug"* to one place,
 and Overseer routes it to the right team-lead.
 
 **Why it's deferred, honestly:** routing is only useful once we can (a) reliably know each
@@ -20,16 +20,16 @@ routing would be a button that can't push. Build the foundations first.
 
 **Design when foundations exist:**
 1. **Per-lead domain registry** — today `cwd` is always `$HOME`, so domain is inferred
-   from the transcript's project slug. Better: a `projects.yaml` Tom maintains
+   from the transcript's project slug. Better: a `projects.yaml` the operator maintains
    (`lead name -> domain -> repo/path -> owns: [modules/keywords]`), or derive ownership
    from each lead's recent file edits (read transcript tool_use targets).
 2. **Classifier** — match an instruction to a lead by domain keywords + recent activity.
    Start dumb (keyword/path overlap), not an LLM call, to keep it cheap and debuggable.
-   Ambiguous -> ask Tom (don't guess and mis-route).
+   Ambiguous -> ask the operator (don't guess and mis-route).
 3. **Delivery** — depends on the drive mechanism (S4 follow-on): tmux send-keys if the
    lead runs under tmux (`claude --tmux`), else the remote-control bridge. Gated on a
    quiescence + identity check (`docs/STATE-TRUTH.md` restart-safety section).
-4. **Question relay** — when a lead hits `needs-human`, surface its question to Tom in the
+4. **Question relay** — when a lead hits `needs-human`, surface its question to the operator in the
    one board with a reply box that routes the answer back down. Same delivery dependency.
 
 ## Gating order (do not skip)
@@ -41,4 +41,4 @@ routing would be a button that can't push. Build the foundations first.
 ## Explicitly NOT doing (avoid scope creep)
 - A new "AI agent OS" from scratch (the documented mistake — stay thin on Claude primitives).
 - Cloud/multi-user. This is a solo, local tool until it earns more.
-- Fancy UI before state-truth is trustworthy (Tom: UI is secondary).
+- Fancy UI before state-truth is trustworthy (the operator: UI is secondary).

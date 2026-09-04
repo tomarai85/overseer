@@ -66,7 +66,7 @@ lease {
 
 ### How a lead reports (candidate mechanisms, to test in S4)
 1. **Claude Code hooks** — a Stop/Notification/PreToolUse hook in the managed session
-   writes its phase to a lease file Overseer reads. (Tom already has `stop-notify.sh` /
+   writes its phase to a lease file Overseer reads. (the operator already has `stop-notify.sh` /
    `notify.sh` — extend them to write a lease instead of just a sound.) Cleanest; no
    transcript guessing.
 2. **`transcript_offset` delta** — track bytes consumed per session; growth = real

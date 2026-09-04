@@ -4,7 +4,7 @@
   - a background poll thread (engine.scan_once into SQLite)
   - an HTTP server: GET / -> dashboard HTML, GET /api/leads -> JSON board
 
-The page polls /api/leads every 2s. Sessions that need Tom float to the top.
+The page polls /api/leads every 2s. Sessions that need the operator float to the top.
 """
 from __future__ import annotations
 
@@ -417,7 +417,7 @@ def make_handler(db_path):
                 self._send(200, json.dumps({"leads": rows}), "application/json")
             elif self.path.startswith("/api/conversation"):
                 # A session's recent exchange for the detail drawer — read-only, works
-                # for ANY session (not just owned), so Tom can SEE what a worker is
+                # for ANY session (not just owned), so the operator can SEE what a worker is
                 # doing/asking before commanding it. Bounded turns.
                 q = parse_qs(urlparse(self.path).query)
                 sid = (q.get("sid") or [""])[0]
@@ -439,7 +439,7 @@ def make_handler(db_path):
             elif self.path.startswith("/api/children"):
                 # OWNED workers only (driver registry) + each one's quiescence,
                 # so the operate panel can offer real targets and show whether it
-                # is safe to type into them right now. Never lists Tom's own
+                # is safe to type into them right now. Never lists the operator's own
                 # hand-started sessions — those are not Overseer-owned.
                 kids = []
                 for name in driver.list_children():
@@ -452,7 +452,7 @@ def make_handler(db_path):
             else:
                 self._send(404, "not found", "text/plain")
 
-        # ---- operate layer: issue commands from the dashboard (Tom's pain #1/#3) ----
+        # ---- operate layer: issue commands from the dashboard (the operator's pain #1/#3) ----
         # Every action below is guarded in relay/route: OWNED children only, target
         # must be quiescent unless force=true, and each is appended to the audit log.
         # The server binds 127.0.0.1, so this surface is local-only.

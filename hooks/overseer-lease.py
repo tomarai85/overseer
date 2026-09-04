@@ -5,7 +5,7 @@ Self-contained (no PYTHONPATH needed at hook time). Reads the Claude Code hook
 JSON on stdin, takes the phase as argv[1], and writes a lease file that Overseer
 reads as authoritative state truth (better than guessing from the transcript).
 
-Install (opt-in — Tom edits his own settings.json; Overseer never edits it):
+Install (opt-in — the operator edits their own settings.json; Overseer never edits it):
 
   "hooks": {
     "PreToolUse":      [{"hooks":[{"type":"command","command":"python3 ~/overseer/hooks/overseer-lease.py tool_running"}]}],

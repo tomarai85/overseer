@@ -17,7 +17,7 @@ from .engine import scan_once
 from .store import Store
 
 
-# state -> (label, sort priority: things that need Tom float to the top)
+# state -> (label, sort priority: things that need the operator float to the top)
 _STATE_GLYPH = {
     "needs-human": ("[!] needs-you", 0),
     "crashed": ("[x] crashed", 1),
@@ -182,7 +182,7 @@ def cmd_activity(args: list[str]) -> int:
 def cmd_demo(argv: list[str]) -> int:
     """`overseer demo [port]` — serve a board seeded with every state (synthetic).
 
-    Tom's real fleet is usually all-healthy, so this shows what the alert states
+    The operator's real fleet is usually all-healthy, so this shows what the alert states
     (needs-you / crashed / blocked) actually look like. Synthetic data only.
     """
     import os

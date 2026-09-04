@@ -86,7 +86,7 @@ def run():
     acted = budget.pause_owned_over(dry_run=True)
     res.append(("pause_owned_over joins owned child by cwd (name != cwd basename)",
                 len(acted) == 1 and acted[0]["child"] == "w7" and acted[0]["paused"] is False))
-    # a lead whose cwd matches NO registry entry is never paused (Tom's own sessions)
+    # a lead whose cwd matches NO registry entry is never paused (the operator's own sessions)
     roster.fetch = lambda: [roster.Lead(session_id="sY", name=None, cwd="/somewhere/else")]
     res.append(("pause_owned_over ignores a non-owned (unmatched cwd) session",
                 budget.pause_owned_over(dry_run=True) == []))

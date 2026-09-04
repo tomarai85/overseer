@@ -87,7 +87,7 @@ def run():
     res.append(("read DriverError mid-scan -> crashed (no abort)", st("toctou") == "crashed"))
     driver.read = lambda n, lines=60: panes.get(n, "")   # restore the simple stub
 
-    # summary aggregates + flags what needs Tom. Seed the persistent heartbeat so
+    # summary aggregates + flags what needs the operator. Seed the persistent heartbeat so
     # 'frz' reads as stuck (staleness needs history across supervise calls — the
     # first observation always looks fresh, which is correct).
     import json as _json

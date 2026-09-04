@@ -7,7 +7,7 @@ letting workers talk to each other, and keeping a worker moving unattended.
 ## The one safety boundary (everything inherits it)
 
 **Overseer only ever drives children it spawned itself** (the `ov-`-prefixed tmux
-sessions in the driver registry). It never types into, or restarts, Tom's own
+sessions in the driver registry). It never types into, or restarts, the operator's own
 hand-started sessions. This is enforced in code (`driver.is_owned` — `send`/`kill`
 refuse anything unowned, and every action is appended to an audit log), not by
 prompting a model to behave. Plus a **quiescence gate**: a command is only typed
@@ -61,7 +61,7 @@ above are solvable from the browser:
   tick force, every action audited. A refusal (not owned / not idle / ambiguous
   route) comes back as a readable reason, not a failure.
 - `/api/children` lists only OWNED workers + each one's live quiescence, so the
-  target dropdowns can't even offer one of Tom's own sessions.
+  target dropdowns can't even offer one of the operator's own sessions.
 
 The board also surfaces the **moat overlay** (`/api/insight`): a "truly needs you"
 alerts strip (stalled / spiraling / over-budget, with the why) above the board, and

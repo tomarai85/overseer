@@ -1,6 +1,6 @@
 """relay — the operate layer's "talk" verbs: owned + quiescence guarded (S6).
 
-Two of Tom's three stated pains with driving a fleet — "hard to issue commands",
+Two of the operator's three stated pains with driving a fleet — "hard to issue commands",
 "can't pass detailed context when I do", "the bots can't talk to each other" —
 are solved here, without ever risking a live session:
 
@@ -13,7 +13,7 @@ are solved here, without ever risking a live session:
                               both ends owned, target quiescent.
 
 Guards (same boundary as driver.send/kill, plus quiescence):
-  - both src and dst MUST be Overseer-owned (driver.is_owned) — never Tom's own
+  - both src and dst MUST be Overseer-owned (driver.is_owned) — never the operator's own
     hand-started sessions;
   - the TARGET must be quiescent (relay.pane_state == 'waiting') before we type into
     it; a working / needs-human target is refused unless force=True is passed

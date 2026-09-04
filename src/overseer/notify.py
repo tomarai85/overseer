@@ -1,4 +1,4 @@
-"""notify — alert Tom ONLY when a lead needs him (needs-human / crashed / blocked).
+"""notify — alert the operator ONLY when a lead needs them (needs-human / crashed / blocked).
 
 This is the "ring only where I need to look" feature. macOS-native via osascript
 + afplay; no third-party deps. Disabled unless OVERSEER_NOTIFY is truthy so tests
@@ -15,7 +15,7 @@ ALERT_STATES = {"needs-human", "crashed", "blocked"}
 _SOUND = "/System/Library/Sounds/Submarine.aiff"
 # Debounce per (session, STATE), not per session: a session that escalates
 # needs-human -> crashed within the window must still ring (a crash is exactly when
-# Tom needs to know) — a per-session key would suppress it. Same-state flapping is
+# The operator needs to know) — a per-session key would suppress it. Same-state flapping is
 # still debounced. Pruned below so a 24/7 daemon's map can't grow unbounded.
 _last_fired: dict[tuple[str, str], float] = {}
 _DEBOUNCE_SEC = 120.0

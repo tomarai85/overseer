@@ -1,15 +1,15 @@
-"""autopilot — keep an OWNED worker moving (Tom's "auto-send a prompt every few
+"""autopilot — keep an OWNED worker moving (the operator's "auto-send a prompt every few
 minutes so it keeps working forever").
 
 Each time the worker goes quiescent (idle at its prompt) the autopilot sends a
 continuation prompt, so a long task that the worker keeps pausing on advances
 unattended. Bounded and safe by construction:
 
-  - OWNED children only (relay/driver enforce) — never Tom's own sessions;
+  - OWNED children only (relay/driver enforce) — never the operator's own sessions;
   - quiescence-gated: nudges only a child in 'waiting' (turn done). A 'working'
     child is left to work; we just wait and re-check;
   - STOPS on 'needs-human' (a genuine question / permission prompt) — never spam a
-    worker past a point where it actually needs Tom, unless ignore_needs_human=True;
+    worker past a point where it actually needs the operator, unless ignore_needs_human=True;
   - hard cap on total nudges (max_nudges) so it can never run away;
   - stops if the child disappears;
   - every decision is audited.
