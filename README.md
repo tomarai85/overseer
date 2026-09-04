@@ -56,6 +56,19 @@ cd ~/overseer
 #   then: "start a worker in ~/myrepo and run the tests"  /  "check on it"  /  "OK"
 ```
 
+### Keep it running in the background (optional)
+
+Nothing above needs launchd — `./bin/overseer status` works on its own. If you want the web board
+and the two watchers to survive a logout, install them as LaunchAgents:
+
+```bash
+bash deploy/install.sh          # writes ~/Library/LaunchAgents/com.overseer.*.plist and loads them
+```
+
+The plists ship as `*.plist.template` rather than finished files because launchd does not expand
+`$HOME` inside a plist — the path has to be literal, so the installer writes it at install time from
+wherever you cloned the repo. Uninstall is printed at the end of the run.
+
 In the app: left = the parent chat + your workers (with live state) + the monitored
 fleet; the right pane switches between the parent conversation and a selected worker's
 screen. You type to the parent; it spawns / sends / reads workers and reports back.
