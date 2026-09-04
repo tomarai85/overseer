@@ -1,7 +1,8 @@
 # Overseer — Business Memo
 
 > Placeholder name. Sober assessment for a skeptical technical founder, not a pitch.
-> Sources: `~/.claude/docs/orchestrator-research-2026-05-29.md` (two-pass market research), `~/overseer/.harness/spec.md` (product def). Drafted 2026-05-29.
+> Sources: two adversarial market-research passes (competitor/pricing and moat/reliability) plus
+> this repo's product definition. Every external claim below is cited inline. Drafted 2026-05-29.
 
 ## 1. The problem & who has it
 
