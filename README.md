@@ -42,7 +42,12 @@ protocol. That is why it works on stock Claude Code.
 
 ## Quick start
 
+Needs macOS, `python3` (stdlib only — nothing to pip install), the
+[Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) on `PATH`, and `tmux`. The Swift
+cockpit in `app/` additionally needs Xcode; every command below works without it.
+
 ```bash
+git clone https://github.com/tomarai85/overseer.git ~/overseer
 cd ~/overseer
 
 # 1) See your whole fleet's true state in the terminal
@@ -62,12 +67,14 @@ Nothing above needs launchd — `./bin/overseer status` works on its own. If you
 and the two watchers to survive a logout, install them as LaunchAgents:
 
 ```bash
-bash deploy/install.sh          # writes ~/Library/LaunchAgents/com.overseer.*.plist and loads them
+./bin/install-daemon.sh              # notifications: state transitions + stalled/spiraling
+./bin/install-daemon.sh --with-web   # ...and the web board on :8899
+./bin/install-daemon.sh --uninstall  # reversible; removes the agents
 ```
 
-The plists ship as `*.plist.template` rather than finished files because launchd does not expand
-`$HOME` inside a plist — the path has to be literal, so the installer writes it at install time from
-wherever you cloned the repo. Uninstall is printed at the end of the run.
+The plists ship as `deploy/*.plist.template` rather than finished files because launchd does not
+expand `$HOME` inside a plist — the path has to be literal, so the installer writes it at install
+time from wherever you cloned the repo.
 
 In the app: left = the parent chat + your workers (with live state) + the monitored
 fleet; the right pane switches between the parent conversation and a selected worker's
