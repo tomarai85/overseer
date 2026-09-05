@@ -142,6 +142,24 @@ def run(tmp: Path) -> list[tuple[str, bool, str]]:
         ("waiting: assistant text WITHOUT a question (clean turn end)",
          _derive(tmp, "q2", NOISE + [_assistant_text("やっておきました。")], pid=live, raw="idle", mtime_age=30),
          "waiting"),
+        # The roster's raw flag must not hide a question. `claude agents --json` reports busy for a
+        # session that has finished its turn and is sitting on a prompt, which is the entire reason
+        # this module exists — so a completed assistant turn ending in a question outranks it.
+        # Before 2026-09-05 these two returned working and blocked: the raw=="busy" branch ran first
+        # and the question was never examined, so the one state the product exists to surface was
+        # the one state a busy session could never reach.
+        ("needs-human: assistant question, roster says busy (raw flag must not hide it)",
+         _derive(tmp, "q3", NOISE + [_assistant_text("Overwrite the existing file?")],
+                 pid=live, raw="busy", mtime_age=30),
+         "needs-human"),
+        ("needs-human: same, still unanswered 20min later (not 'blocked')",
+         _derive(tmp, "q4", NOISE + [_assistant_text("Overwrite the existing file?")],
+                 pid=live, raw="busy", mtime_age=1200),
+         "needs-human"),
+        ("working: busy + question but FRESH (<10s) — transient tail race, not needs-human",
+         _derive(tmp, "q5", NOISE + [_assistant_text("Overwrite the existing file?")],
+                 pid=live, raw="busy", mtime_age=2),
+         "working"),
         ("blocked: record-timestamp 20min old beats a FRESH file mtime (true staleness)",
          _derive(tmp, "ts1", NOISE + [_assistant_ts(["tool_use"], time.time() - 1200)], pid=live, raw="busy"),
          "blocked"),

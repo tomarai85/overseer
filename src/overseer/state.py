@@ -338,6 +338,14 @@ def derive(lead: Any) -> dict[str, Any]:
     elif sig.thinking:
         state = "working"                           # mid-reasoning (NOT idle) — the
                                                     # signal naive mtime monitors miss
+    elif sig.role == "assistant" and sig.asked_question:
+        # A completed assistant turn that ends in a question is waiting on a person, and that
+        # outranks the roster's raw flag. This branch sat BELOW `raw == "busy"` until 2026-09-05,
+        # which meant a busy-flagged session with an unanswered question returned 'working' and
+        # then 'blocked' — never 'needs-human'. The premise of this whole module is that raw
+        # busy/idle is unreliable, so letting it short-circuit the strongest content signal
+        # contradicted the design at exactly the state the product exists to surface.
+        state = "needs-human" if (age is not None and age >= NEEDS_HUMAN_MIN_AGE) else "working"
     elif raw == "busy":
         if age is not None and age >= STALE_BLOCKED_SEC:
             state = "blocked"                       # busy but frozen -> hung suspect
@@ -355,9 +363,6 @@ def derive(lead: Any) -> dict[str, Any]:
             state = "waiting"
         else:
             state = "working"                       # human just spoke; agent about to respond
-    elif sig.role == "assistant" and sig.asked_question:
-        # a clean turn that ends in a question is genuinely asking the operator
-        state = "needs-human" if (age is not None and age >= NEEDS_HUMAN_MIN_AGE) else "working"
     elif sig.role == "assistant":
         state = "waiting"                           # turn complete, awaiting the operator's prompt
     elif sig.is_tool_result:
