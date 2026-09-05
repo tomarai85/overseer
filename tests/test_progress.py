@@ -34,6 +34,21 @@ def run():
     res.append(("flat > STALL_SEC + busy -> stalled (silent hang)", r["verdict"] == "stalled"))
     res.append(("stalled reports flat_for", r["flat_for"] >= progress.STALL_SEC))
 
+    # A tool that has not returned explains flat tokens on its own: output tokens are recorded only
+    # on assistant messages, so a three-minute build produces none. Before 2026-09-05 that read as
+    # a silent hang, which made every long tool call a false alarm.
+    def _flat(now_at, pend):
+        s = {"s9": {"tokens": 1000, "since": 0.0, "seen": 0.0, "samples": [[0.0, 1000]]}}
+        return progress.classify("s9", "busy", now=now_at, snaps=s, tokens=1000,
+                                 pending_tool=pend)["verdict"]
+
+    res.append(("busy + flat 121s WITH a pending tool -> progressing, not stalled",
+                _flat(121.0, True) == "progressing"))
+    res.append(("busy + flat 121s with NO pending tool -> still stalled (the real signal survives)",
+                _flat(121.0, False) == "stalled"))
+    res.append(("a pending tool past TOOL_GRACE_SEC is stalled again (grace is bounded)",
+                _flat(progress.TOOL_GRACE_SEC + 10, True) == "stalled"))
+
     # huge token burst in 1s -> spiraling (runaway)
     snaps2 = {}
     progress.classify("s2", "busy", now=NOW, snaps=snaps2, tokens=0)

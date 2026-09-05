@@ -22,6 +22,7 @@ from . import driver, usage
 
 SNAP = driver.DATA / "token-snapshots.json"
 STALL_SEC = 120.0                 # busy + output tokens flat this long -> stalled (silent hang)
+TOOL_GRACE_SEC = 600.0            # ...unless a tool is still out; matches state.STALE_BLOCKED_SEC
 SPIRAL_TOKENS_PER_MIN = 60_000    # sustained output burn above this -> spiraling (runaway)
 RATE_WINDOW_SEC = 60.0            # compute the burn rate over this trailing window of samples
 MAX_SAMPLES = 24                  # bound the per-session ring
@@ -56,12 +57,18 @@ def _save(snaps: dict) -> None:
 
 
 def classify(session_id: str, raw_status: str | None, now: float | None = None,
-             snaps: dict | None = None, tokens: int | None = None) -> dict:
+             snaps: dict | None = None, tokens: int | None = None,
+             pending_tool: bool | None = None) -> dict:
     """Derive progress truth for one session from its output-token delta over time.
 
     `snaps` (the persisted history) is mutated; pass `tokens` to inject a count in
     tests instead of reading the transcript. Returns
     {session_id, verdict, tokens, flat_for, rate_per_min}.
+
+    `pending_tool` says the session's last record is a tool call that has not returned. It matters
+    because output tokens are only recorded on assistant messages (usage.py:41-58), so a session
+    running a three-minute build emits none — flat is the EXPECTED reading there, not evidence of a
+    hang. Left None it is read from the transcript.
     """
     now = now if now is not None else time.time()
     if snaps is None:
@@ -103,7 +110,16 @@ def classify(session_id: str, raw_status: str | None, now: float | None = None,
         if prev_tokens is None:
             verdict = "progressing" if raw == "busy" else "idle"
         elif raw == "busy" and tokens <= prev_tokens and flat_for >= STALL_SEC:
-            verdict = "stalled"                                    # the silent hang Agent View can't see
+            # Flat output tokens mean "no assistant message was recorded", which is true of a hang
+            # AND of every tool call longer than STALL_SEC. Before 2026-09-05 both read as a silent
+            # hang, so any build, test run or large search over two minutes was reported as one.
+            # A pending tool is therefore given until TOOL_GRACE_SEC — the same 10 minutes at which
+            # state.derive() independently calls a stuck tool 'blocked' — before flatness counts
+            # against it. With no tool outstanding, busy-and-silent is still the real signal.
+            if _pending_tool(session_id, pending_tool) and flat_for < TOOL_GRACE_SEC:
+                verdict = "progressing"                            # a tool is running; flat is expected
+            else:
+                verdict = "stalled"                                # the silent hang Agent View can't see
         elif rate >= SPIRAL_TOKENS_PER_MIN:
             verdict = "spiraling"
         elif raw == "busy" or tokens > prev_tokens:
@@ -112,6 +128,23 @@ def classify(session_id: str, raw_status: str | None, now: float | None = None,
             verdict = "idle"
     return {"session_id": session_id, "verdict": verdict, "tokens": tokens,
             "flat_for": round(flat_for, 1), "rate_per_min": round(rate)}
+
+
+def _pending_tool(session_id: str, override: bool | None) -> bool:
+    """Is this session's last conversational record a tool call that has not returned?
+
+    Read lazily and only when a stall is otherwise about to be declared, so the common path costs
+    nothing. Tests inject the answer through classify(pending_tool=...) rather than writing a
+    transcript. Any failure reads as False — which preserves the old, stricter verdict, so a broken
+    read can never invent 'progressing' for a session that is genuinely hung.
+    """
+    if override is not None:
+        return override
+    try:
+        from . import state
+        return bool(state.TailSignals(state.last_conversational(_tail_for(session_id))).pending_tool)
+    except Exception:
+        return False
 
 
 def _tail_for(session_id: str) -> list:
