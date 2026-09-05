@@ -309,6 +309,16 @@ def derive(lead: Any) -> dict[str, Any]:
 
     # ---- v2: prefer an explicit hook-reported lease over transcript heuristics ----
     lrec = lease.read(lead.session_id)
+    # A lease describes the PROCESS that wrote it, not the session id. Resuming reuses the id under
+    # a new pid, so a lease left by the previous incarnation can still be fresh by timestamp while
+    # saying 'done' about a process that is alive right now — and recover.plan_restart() reads
+    # 'done' as restartable. Until 2026-09-05 only `phase` was read, and the pid the writer had
+    # gone to the trouble of recording (lease.py:44-50) was ignored by the only reader that mattered.
+    # Disagreement disqualifies the lease rather than the process: falling back to the transcript
+    # heuristic costs accuracy, trusting the wrong lease costs a live agent killed mid-edit.
+    if lrec and lrec.get("pid") is not None and lead.pid is not None \
+            and int(lrec["pid"]) != int(lead.pid):
+        lrec = None
     if lrec and lease.is_fresh(lrec, now):
         phase = lrec.get("phase", "")
         if not alive:

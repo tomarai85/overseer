@@ -175,6 +175,24 @@ def run(tmp: Path) -> list[tuple[str, bool, str]]:
          _derive(tmp, "l2", NOISE + [_assistant(["text"])], pid=dead, raw="idle",
                  lease_rec={"session_id": "l2", "phase": "tool_running", "ts": time.time()}),
          "crashed"),
+        # A lease belongs to the PROCESS that wrote it. Resuming a session id reuses the id under a
+        # new pid, so a fresh-looking lease from the previous incarnation can say 'done' about a
+        # process that is very much alive. Before 2026-09-05 derive() read only `phase`, returned
+        # done, and recover.plan_restart() called that restartable — the one derivation whose error
+        # kills a live agent mid-edit. A pid that disagrees now disqualifies the lease.
+        ("lease pid disagrees with the live lead -> lease ignored, heuristic decides",
+         _derive(tmp, "l5", NOISE + [_assistant(["tool_use"])], pid=live, raw="busy",
+                 lease_rec={"session_id": "l5", "pid": 999_999, "phase": "done", "ts": time.time()}),
+         "working"),
+        ("lease pid AGREES with the lead -> lease still authoritative",
+         _derive(tmp, "l6", NOISE + [_assistant(["tool_use"])], pid=live, raw="busy",
+                 lease_rec={"session_id": "l6", "pid": live, "phase": "needs-human",
+                            "ts": time.time()}),
+         "needs-human"),
+        ("lease with no pid recorded -> unchanged, still authoritative (older writers)",
+         _derive(tmp, "l7", NOISE + [_assistant(["tool_use"])], pid=live, raw="busy",
+                 lease_rec={"session_id": "l7", "phase": "needs-human", "ts": time.time()}),
+         "needs-human"),
         ("stale lease ignored -> falls back to heuristic (waiting)",
          _derive(tmp, "l3", NOISE + [_assistant(["text"])], pid=live, raw="idle",
                  lease_rec={"session_id": "l3", "phase": "working", "ts": time.time() - 9999}),
