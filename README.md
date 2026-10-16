@@ -3,6 +3,42 @@
 [![tests](https://github.com/tomarai85/overseer/actions/workflows/tests.yml/badge.svg)](https://github.com/tomarai85/overseer/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+Overseer tells a developer who runs many Claude Code sessions on one Mac which of them
+are working, waiting on them, hung, or dead, and lets one parent session start and drive
+worker sessions.
+
+Real output on the author's Mac, 2026-10-15 18:52 CDT. Session names are replaced with
+numbers; states, ages and ids are as printed. 13 of the 17 rows are cut at the `...` lines.
+
+```
+$ ./bin/overseer status
+
+  OVERSEER  -  17 live leads  -  18:52:17
+
+  STATE          NAME / DOMAIN                      ACTIVITY  SESSION
+  ------------------------------------------------------------------------------
+  [.] waiting    session-01                         1h        42216533
+  [.] waiting    session-02                         6m        33d91c83
+  ...
+  [>] working    session-12                         3m        c259d996
+  [>] working    session-13                         1m        3e0658e4
+  ...
+```
+
+Try it (macOS, `python3`, the Claude Code CLI on `PATH`; stdlib only, nothing to install):
+
+```bash
+git clone https://github.com/tomarai85/overseer.git && cd overseer
+./bin/overseer status
+```
+
+The hard part: `claude agents --json` reports only busy or idle. Overseer reads the last
+conversational record of each session's transcript instead, so a long thinking block counts
+as working, an unanswered tool call is judged working or hung by its age, and a closing
+question counts as waiting on you.
+
+---
+
 A local **fleet cockpit** for a solo developer running many AI coding agents at once.
 You talk to **one** parent AI; it spawns and drives child Claude Code workers for you —
 instead of babysitting 7-8 terminals by hand.
